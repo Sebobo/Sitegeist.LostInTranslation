@@ -1,11 +1,20 @@
 export type RetranslateTarget = 'node' | 'document';
 
+export type SpecializationInfo = {
+    targetCoordinates: Record<string, string>;
+    targetLanguage: {
+        label: string;
+    };
+    staleNodeCount: number;
+};
+
 export type ContentInfoResponse = {
     isUpToDate: boolean;
     referenceLanguage: {
         label: string;
     } | null;
     staleNodeCount: number;
+    specializations: SpecializationInfo[];
 };
 
 export type ContentInfoRequest = {

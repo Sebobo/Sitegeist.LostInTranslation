@@ -26,9 +26,8 @@ use Sitegeist\LostInTranslation\Domain\Retranslator;
  *
  * Two endpoints, both returning JSON:
  *  - `getTranslationMetadata` reports whether the target-language subtree is in sync with its
- *    source (reference) language. "In sync" is sourced from the {@see StaleTranslationProjection}:
- *    if no stale records exist below the node at the target origin, the UI shows the up-to-date
- *    state.
+ *    source (reference) language and also returns metadata for every specialization (language that
+ *    has the current language as its reference).
  *  - `retranslateNode` delegates to {@see Retranslator} (same path as the CLI command).
  *
  * The reference language is derived from the target preset's `referenceLanguage` configuration via
@@ -47,7 +46,10 @@ class RetranslationController extends ActionController
     protected string $languageDimensionName;
 
     /**
-     * Report whether translations for the given node into the target dimension are up to date.
+     * Report whether translations for the given node into the target dimension are up to date,
+     * together with metadata for every language specialization of the current dimension.
+     *
+     * "Specializations" are languages that have the current language configured as their reference.
      *
      * The "stale" signal is whatever {@see StaleTranslationProjection} has recorded for the
      * target origin DSP — no source/target timestamp comparison happens here.
@@ -66,64 +68,99 @@ class RetranslationController extends ActionController
                 'isUpToDate' => true,
                 'referenceLanguage' => null,
                 'staleNodeCount' => 0,
+                'specializations' => [],
             ]);
         }
 
-        /** @var array<string, string> $targetCoordinates */
-        $targetCoordinates = \json_decode($coordinates, true, flags: JSON_THROW_ON_ERROR);
-        $targetDimensionSpacePoint = DimensionSpacePoint::fromArray($targetCoordinates);
+        /** @var array<string, string> $coordinatesArray */
+        $coordinatesArray = \json_decode($coordinates, true, flags: JSON_THROW_ON_ERROR);
+        $dimensionSpacePoint = DimensionSpacePoint::fromArray($coordinatesArray);
 
         $resolver = new ReferenceDimensionSpacePointResolver(
             allowedDimensionSubspace: $cr->getVariationGraph()->getDimensionSpacePoints(),
             contentDimensionSource: $cr->getContentDimensionSource(),
             languageDimensionId: $languageDimensionId,
         );
-        $sourceDimensionSpacePoint = $resolver->tryResolveSourceDimensionSpacePoint($targetDimensionSpacePoint);
-        if ($sourceDimensionSpacePoint === null) {
-            // No referenceLanguage on the target preset → nothing to compare against.
-            return $this->jsonResponse([
-                'isUpToDate' => true,
-                'referenceLanguage' => null,
-                'staleNodeCount' => 0,
-            ]);
-        }
 
-        $sourceLanguageValue = $sourceDimensionSpacePoint->coordinates[$this->languageDimensionName];
-        $sourceLanguageDimensionValue = $languageDimension->getValue($sourceLanguageValue);
-        $configuredLabel = $sourceLanguageDimensionValue?->configuration['label'] ?? null;
-        $referenceLabel = is_string($configuredLabel) ? $configuredLabel : $sourceLanguageValue;
+        // --- Part 1: existing metadata — coordinates as TARGET, find its SOURCE ---
+        $sourceDimensionSpacePoint = $resolver->tryResolveSourceDimensionSpacePoint($dimensionSpacePoint);
+        $referenceLabel = null;
+        $isUpToDate = true;
+        $staleNodeCount = 0;
 
-        $contentGraph = $cr->getContentGraph(WorkspaceName::fromString($workspaceName));
-        $sourceSubgraph = $contentGraph->getSubgraph(
-            $sourceDimensionSpacePoint,
-            NeosVisibilityConstraints::excludeRemoved(),
-        );
-        $sourceSubtree = $sourceSubgraph->findSubtree(
-            NodeAggregateId::fromString($nodeAggregateId),
-            FindSubtreeFilter::create(
-                nodeTypes: NodeTypeCriteria::createWithAllowedNodeTypeNames(
-                    NodeTypeNames::fromStringArray(['Neos.Neos:ContentCollection', 'Neos.Neos:Content'])
+        if ($sourceDimensionSpacePoint !== null) {
+            $sourceLanguageValue = $sourceDimensionSpacePoint->coordinates[$this->languageDimensionName];
+            $sourceLanguageDimensionValue = $languageDimension->getValue($sourceLanguageValue);
+            $configuredLabel = $sourceLanguageDimensionValue?->configuration['label'] ?? null;
+            $referenceLabel = is_string($configuredLabel) ? $configuredLabel : $sourceLanguageValue;
+
+            $contentGraph = $cr->getContentGraph(WorkspaceName::fromString($workspaceName));
+            $sourceSubgraph = $contentGraph->getSubgraph(
+                $sourceDimensionSpacePoint,
+                NeosVisibilityConstraints::excludeRemoved(),
+            );
+            $sourceSubtree = $sourceSubgraph->findSubtree(
+                NodeAggregateId::fromString($nodeAggregateId),
+                FindSubtreeFilter::create(
+                    nodeTypes: NodeTypeCriteria::createWithAllowedNodeTypeNames(
+                        NodeTypeNames::fromStringArray(['Neos.Neos:ContentCollection', 'Neos.Neos:Content'])
+                    ),
                 ),
-            ),
-        );
-        if ($sourceSubtree === null) {
-            return $this->jsonResponse([
-                'isUpToDate' => true,
-                'referenceLanguage' => ['label' => $referenceLabel],
-                'staleNodeCount' => 0,
-            ]);
+            );
+            if ($sourceSubtree !== null) {
+                $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($dimensionSpacePoint);
+                $staleTranslations = $cr->projectionState(StaleTranslationReadModel::class)
+                    ->staleTranslationFinder
+                    ->findBySubtree($sourceSubtree, $targetOrigin);
+                $staleNodeCount = count($staleTranslations->items);
+                $isUpToDate = $staleNodeCount === 0;
+            }
         }
 
-        $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
-        $staleTranslations = $cr->projectionState(StaleTranslationReadModel::class)
-            ->staleTranslationFinder
-            ->findBySubtree($sourceSubtree, $targetOrigin);
-        $staleCount = count($staleTranslations->items);
+        // --- Part 2: specializations — coordinates as SOURCE, find its TARGETS ---
+        $specializations = [];
+        $targetDimensionSpacePoints = $resolver->tryResolveTargetDimensionSpacePoints($dimensionSpacePoint);
+        if ($targetDimensionSpacePoints !== []) {
+            $contentGraph = $cr->getContentGraph(WorkspaceName::fromString($workspaceName));
+            $sourceSubgraph = $contentGraph->getSubgraph(
+                $dimensionSpacePoint,
+                NeosVisibilityConstraints::excludeRemoved(),
+            );
+            $sourceSubtree = $sourceSubgraph->findSubtree(
+                NodeAggregateId::fromString($nodeAggregateId),
+                FindSubtreeFilter::create(
+                    nodeTypes: NodeTypeCriteria::createWithAllowedNodeTypeNames(
+                        NodeTypeNames::fromStringArray(['Neos.Neos:ContentCollection', 'Neos.Neos:Content'])
+                    ),
+                ),
+            );
+            if ($sourceSubtree !== null) {
+                foreach ($targetDimensionSpacePoints as $targetDimensionSpacePoint) {
+                    $targetLanguageValue = $targetDimensionSpacePoint->coordinates[$this->languageDimensionName];
+                    $targetLanguageDimensionValue = $languageDimension->getValue($targetLanguageValue);
+                    $configuredLabel = $targetLanguageDimensionValue?->configuration['label'] ?? null;
+                    $targetLabel = is_string($configuredLabel) ? $configuredLabel : $targetLanguageValue;
+
+                    $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
+                    $staleTranslations = $cr->projectionState(StaleTranslationReadModel::class)
+                        ->staleTranslationFinder
+                        ->findBySubtree($sourceSubtree, $targetOrigin);
+                    $staleCount = count($staleTranslations->items);
+
+                    $specializations[] = [
+                        'targetCoordinates' => $targetDimensionSpacePoint->coordinates,
+                        'targetLanguage' => ['label' => $targetLabel],
+                        'staleNodeCount' => $staleCount,
+                    ];
+                }
+            }
+        }
 
         return $this->jsonResponse([
-            'isUpToDate' => $staleCount === 0,
-            'referenceLanguage' => ['label' => $referenceLabel],
-            'staleNodeCount' => $staleCount,
+            'isUpToDate' => $isUpToDate,
+            'referenceLanguage' => $referenceLabel !== null ? ['label' => $referenceLabel] : null,
+            'staleNodeCount' => $staleNodeCount,
+            'specializations' => $specializations,
         ]);
     }
 

@@ -4,11 +4,11 @@
         <body>
             <trans-unit id="view.upToDate" xml:space="preserve" approved="yes">
                 <source>The translations are up to date.</source>
-                <target state="translated">Die Übersetzungen sind up to date.</target>
+                <target state="translated">Die Übersetzungen sind aktuell.</target>
             </trans-unit>
             <trans-unit id="view.outdated" xml:space="preserve" approved="yes">
                 <source>{count} node(s) need retranslation from "{language}". Retranslate this content now?</source>
-                <target state="translated">{count} Knoten müssen aus "{language}" neu übersetzt werden. Diesen Inhalt jetzt neu übersetzen?</target>
+                <target state="translated">{count} Inhalte müssen aus "{language}" neu übersetzt werden. Diesen Inhalt jetzt neu übersetzen?</target>
             </trans-unit>
             <trans-unit id="view.noReferenceLanguage" xml:space="preserve" approved="yes">
                 <source>No reference language is available for this language.</source>

@@ -51,6 +51,45 @@ final readonly class ReferenceDimensionSpacePointResolver
         return null;
     }
 
+    /**
+     * @return array<int, DimensionSpacePoint>
+     */
+    public function tryResolveTargetDimensionSpacePoints(DimensionSpacePoint $dimensionSpacePoint): array
+    {
+        $languageDimension = $this->contentDimensionSource->getDimension($this->languageDimensionId);
+        if ($languageDimension === null) {
+            return [];
+        }
+
+        $sourceLanguageValue = $dimensionSpacePoint->coordinates[$this->languageDimensionId->value] ?? null;
+        if ($sourceLanguageValue === null) {
+            return [];
+        }
+
+        $targets = [];
+        foreach ($this->allowedDimensionSubspace as $targetDimensionSpacePoint) {
+            $targetLanguageValue = $targetDimensionSpacePoint->coordinates[$this->languageDimensionId->value] ?? null;
+            if ($targetLanguageValue === null) {
+                continue;
+            }
+
+            $targetLanguage = $languageDimension->getValue($targetLanguageValue);
+            if ($targetLanguage === null) {
+                continue;
+            }
+
+            $referenceLanguage = $targetLanguage->configuration['referenceLanguage'] ?? null;
+            if ($referenceLanguage === null && !$targetLanguage->specializationDepth->isZero()) {
+                $referenceLanguage = $languageDimension->getGeneralization($targetLanguage)?->value;
+            }
+            if ($referenceLanguage === $sourceLanguageValue) {
+                $targets[] = $targetDimensionSpacePoint;
+            }
+        }
+
+        return $targets;
+    }
+
     public function tryResolveSourceDimensionSpacePoint(DimensionSpacePoint $dimensionSpacePoint): ?DimensionSpacePoint
     {
         $languageDimension = $this->contentDimensionSource->getDimension($this->languageDimensionId);
