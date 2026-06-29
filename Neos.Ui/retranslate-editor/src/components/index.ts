@@ -5,19 +5,23 @@ export const Container = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
-`
+`;
 
 export const Info = styled.div`
     width: 100%;
     gap: 8px;
-`
+`;
+
+export const DialogContent = styled.div`
+    padding: 0 16px;
+`;
 
 export const ButtonsContainer = styled.div`
     width: 100%;
     display: flex;
     flex-direction: column;
     gap: 8px;
-`
+`;
 
 const spin = keyframes`
     from {

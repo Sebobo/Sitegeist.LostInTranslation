@@ -15,6 +15,7 @@ export type ContentInfoResponse = {
     } | null;
     staleNodeCount: number;
     specializations: SpecializationInfo[];
+    dimensionNames: Record<string, string>;
 };
 
 export type ContentInfoRequest = {
@@ -29,6 +30,7 @@ export type TranslateRequest = {
     workspaceName: string;
     targetCoordinates: string;
     contentRepositoryId: string;
+    force?: boolean;
 };
 
 export type TranslateResponse = {

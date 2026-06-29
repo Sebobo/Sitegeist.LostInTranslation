@@ -5,8 +5,8 @@
             <trans-unit id="view.upToDate">
                 <source>The translations are up to date.</source>
             </trans-unit>
-            <trans-unit id="view.outdated">
-                <source>{count} node(s) need retranslation from "{language}". Retranslate this content now?</source>
+            <trans-unit id="view.staleNodes">
+                <source>({staleNodeCount} changes)</source>
             </trans-unit>
             <trans-unit id="view.error">
                 <source>The translation status could not be loaded.</source>
@@ -21,7 +21,10 @@
                 <source>Translating...</source>
             </trans-unit>
             <trans-unit id="button.translate">
-                <source>Retranslate</source>
+                <source>Translate changes</source>
+            </trans-unit>
+            <trans-unit id="button.forceTranslate">
+                <source>Force translation</source>
             </trans-unit>
         </body>
     </file>

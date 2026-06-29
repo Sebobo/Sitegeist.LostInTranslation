@@ -8,9 +8,10 @@ export const useContentInfo = (
     contentRepositoryId: string
 ) => {
     const enabled = Boolean(nodeId && workspace && Object.keys(dimensions).length);
+    const dimensionsHash = JSON.stringify(dimensions);
 
     return useQuery({
-        queryKey: ['lost-in-translation', 'content-info', nodeId, workspace, dimensions, contentRepositoryId],
+        queryKey: ['lost-in-translation', 'content-info', nodeId, workspace, dimensionsHash, contentRepositoryId],
         queryFn: async () => {
             return endpoints().getContentInfo({
                 nodeAggregateId: nodeId as string,
@@ -20,7 +21,9 @@ export const useContentInfo = (
             });
         },
         enabled,
-        staleTime: 0,
-        cacheTime: 0
+        placeholderData: (previousData) => previousData,
+        staleTime: 30_000,
+        cacheTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: false,
     });
 };

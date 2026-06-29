@@ -1,11 +1,11 @@
-import React from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { useI18n } from '@sitegeist/lostintranslation-neos-bridge';
-import { endpoints } from './hooks/backend';
-import { useContentInfo } from './hooks/useContentInfo';
-import { useNodeInfo } from './hooks/useNodeInfo';
-import { Button } from '@neos-project/react-ui-components'
-import { Container, Info, LoadingContainer, Spinner, ButtonsContainer } from './components';
+import React, {useCallback, useState, useMemo} from 'react';
+import {useMutation} from '@tanstack/react-query';
+import {useI18n} from '@sitegeist/lostintranslation-neos-bridge';
+import {endpoints} from './hooks/backend';
+import {useContentInfo} from './hooks/useContentInfo';
+import {useNodeInfo} from './hooks/useNodeInfo';
+import {Button, Dialog, SelectBox} from '@neos-project/react-ui-components'
+import {Container, Info, LoadingContainer, Spinner, ButtonsContainer, DialogContent} from './components';
 
 type RetranslateViewTarget = 'node' | 'document';
 
@@ -13,28 +13,82 @@ type RetranslateViewProps = {
     for: RetranslateViewTarget;
 };
 
+type ResultDialogState = {
+    type: 'success' | 'warn' | 'error';
+    title: string;
+    message: string;
+};
+
 export const RetranslateView = ({for: target}: RetranslateViewProps) => {
     const t = useI18n();
     const nodeInfo = useNodeInfo(target);
-    const { data: contentData, isLoading } = useContentInfo(nodeInfo.nodeId, nodeInfo.workspace, nodeInfo.dimensions, nodeInfo.contentRepositoryId);
+    const {
+        data: contentData,
+        isLoading
+    } = useContentInfo(nodeInfo.nodeId, nodeInfo.workspace, nodeInfo.dimensions, nodeInfo.contentRepositoryId);
+
+    const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+    const [resultDialog, setResultDialog] = useState<ResultDialogState | null>(null);
 
     const translateMutation = useMutation({
-        mutationFn: async (targetCoordinates: Record<string, string>) => {
+        mutationFn: async (params: { targetCoordinates: Record<string, string>; force?: boolean }) => {
             return endpoints().translate({
                 nodeAggregateId: nodeInfo.nodeId as string,
                 workspaceName: nodeInfo.workspace as string,
-                targetCoordinates: JSON.stringify(targetCoordinates),
-                contentRepositoryId: nodeInfo.contentRepositoryId
+                targetCoordinates: JSON.stringify(params.targetCoordinates),
+                contentRepositoryId: nodeInfo.contentRepositoryId,
+                force: params.force
             });
         },
-        onSuccess: () => window.location.reload()
+        onSuccess: (response) => {
+            if (response.skippedReason) {
+                setResultDialog({
+                    type: 'warn',
+                    title: t('dialog.skipped', 'Skipped', {}, 'Sitegeist.LostInTranslation', 'Main'),
+                    message: response.message,
+                });
+            } else if (response.stalePropertyCommandsDispatched === 0 && response.variantCommandsDispatched === 0) {
+                setResultDialog({
+                    type: 'warn',
+                    title: t('dialog.noop', 'No Change', {}, 'Sitegeist.LostInTranslation', 'Main'),
+                    message: response.message,
+                });
+            } else {
+                setResultDialog({
+                    type: 'success',
+                    title: t('dialog.success', 'Translation Complete', {}, 'Sitegeist.LostInTranslation', 'Main'),
+                    message: response.message,
+                });
+            }
+        },
+        onError: (error: Error) => {
+            setResultDialog({
+                type: 'error',
+                title: t('dialog.error', 'Translation Failed', {}, 'Sitegeist.LostInTranslation', 'Main'),
+                message: error.message || 'An unknown error occurred',
+            });
+        }
     });
+
+    const closeDialog = useCallback(() => setResultDialog(null), [setResultDialog]);
+
+    const reloadPage = useCallback(() => window.location.reload(), []);
+
+    const options = useMemo(() => contentData?.specializations.map((spec) => {
+        const label = Object.keys(spec.targetCoordinates).map((key) => {
+            return `${contentData.dimensionNames[key]}: ${spec.targetCoordinates[key].toUpperCase()}`;
+        }).join(' / ') + ' ' + t('view.staleNodes', '', {staleNodeCount: '' + spec.staleNodeCount}, 'Sitegeist.LostInTranslation', 'Main') + ')';
+        return {
+            value: JSON.stringify(spec.targetCoordinates),
+            label,
+        };
+    }), [contentData?.specializations]);
 
     if (isLoading) {
         return (
             <Container>
                 <LoadingContainer>
-                    <Spinner />
+                    <Spinner/>
                     <Info>
                         {t('view.loading', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
                     </Info>
@@ -47,38 +101,67 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
         return null;
     }
 
+    const currentValue = selectedTarget ?? options[0].value;
+    const selectedSpec = contentData.specializations.find(
+        (spec) => JSON.stringify(spec.targetCoordinates) === currentValue
+    );
+
     return (
-        <Container>
-            <ButtonsContainer>
-                {contentData.specializations.map((spec) => (
-                    <div key={JSON.stringify(spec.targetCoordinates)}>
-                        <Info>
-                            {t(
-                                'view.outdated',
-                                '',
-                                {
-                                    language: spec.targetLanguage.label,
-                                    count: String(spec.staleNodeCount)
-                                },
-                                'Sitegeist.LostInTranslation',
-                                'Main'
-                            )}
-                        </Info>
+        <>
+            <Container>
+                <SelectBox
+                    options={options}
+                    value={currentValue}
+                    onValueChange={(value: string) => setSelectedTarget(value)}
+                />
+                {selectedSpec && (
+                    <ButtonsContainer>
                         {translateMutation.isPending ? (
                             <LoadingContainer>
-                                <Spinner />
+                                <Spinner/>
                                 <Info>
                                     {t('view.translating', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
                                 </Info>
                             </LoadingContainer>
                         ) : (
-                            <Button onClick={() => translateMutation.mutate(spec.targetCoordinates)}>
-                                {t('button.translate', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
-                            </Button>
+                            <ButtonsContainer>
+                                <Button
+                                    onClick={() => translateMutation.mutate({targetCoordinates: selectedSpec.targetCoordinates})}
+                                    disabled={selectedSpec.staleNodeCount === 0}
+                                >
+                                    {t('button.translate', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                                </Button>
+                                <Button onClick={() => translateMutation.mutate({
+                                    targetCoordinates: selectedSpec.targetCoordinates,
+                                    force: true
+                                })}>
+                                    {t('button.forceTranslate', 'Force', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                                </Button>
+                            </ButtonsContainer>
                         )}
-                    </div>
-                ))}
-            </ButtonsContainer>
-        </Container>
+                    </ButtonsContainer>
+                )}
+            </Container>
+            {resultDialog && (
+                <Dialog
+                    isOpen={true}
+                    onRequestClose={closeDialog}
+                    title={resultDialog.title}
+                    type={resultDialog.type}
+                    actions={[
+                        <Button key="reload" onClick={reloadPage}>
+                            {t('dialog.reload', 'Reload', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                        </Button>,
+                        <Button key="close" onClick={closeDialog}>
+                            {t('dialog.close', 'Close', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                        </Button>,
+                    ]}
+                >
+                    <DialogContent>
+                        {resultDialog.message}
+                    </DialogContent>
+                </Dialog>
+            )}
+        </>
     );
 };

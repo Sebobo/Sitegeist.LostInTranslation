@@ -23,6 +23,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\PropertyNames;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
+use Neos\Neos\Domain\Service\NodeTypeNameFactory;
 use Neos\Neos\Domain\SubtreeTagging\NeosVisibilityConstraints;
 use Neos\Neos\Utility\NodeUriPathSegmentGenerator;
 use Sitegeist\LostInTranslation\ContentRepository\AuthProvider\AISystemTranslationRuntimeState;
@@ -83,6 +84,7 @@ class Retranslator
         WorkspaceName $workspaceName,
         NodeAggregateId $nodeAggregateId,
         DimensionSpacePoint $targetDimensionSpacePoint,
+        bool $force = false,
     ): RetranslationResult {
         $cr = $this->contentRepositoryRegistry->get($contentRepositoryId);
         $languageDimensionId = new ContentDimensionId($this->languageDimensionName);
@@ -148,50 +150,117 @@ class Retranslator
             ));
         }
 
-        // Pre-fetch stale records keyed by aggregate id for O(1) lookup during the walk.
-        // The finder takes the *source* subtree (for the node id list) but filters by the *target*
-        // origin dsp hash — that's where stale records live.
-        $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
-        $staleTranslations = $cr->projectionState(StaleTranslationReadModel::class)
-            ->staleTranslationFinder
-            ->findBySubtree($sourceSubtree, $targetOrigin);
-        $staleByNodeAggregateId = [];
-        foreach ($staleTranslations as $staleTranslation) {
-            $staleByNodeAggregateId[$staleTranslation->nodeAggregateId->value] = $staleTranslation;
+        $nodeTypeManager = $cr->getNodeTypeManager();
+        $nonDocumentNodeTypeName = NodeTypeNameFactory::forDocument();
+
+        if ($force) {
+            // Force mode: retranslate the entry node (regardless of type) and all non-Document
+            // descendants, ignoring the stale projection.
+            $propertyCommands = [];
+        } else {
+            // Pre-fetch stale records keyed by aggregate id for O(1) lookup during the walk.
+            // The finder takes the *source* subtree (for the node id list) but filters by the *target*
+            // origin dsp hash — that's where stale records live.
+            $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
+            $staleTranslations = $cr->projectionState(StaleTranslationReadModel::class)
+                ->staleTranslationFinder
+                ->findBySubtree($sourceSubtree, $targetOrigin);
+            $staleByNodeAggregateId = [];
+            foreach ($staleTranslations as $staleTranslation) {
+                $staleByNodeAggregateId[$staleTranslation->nodeAggregateId->value] = $staleTranslation;
+            }
+            $propertyCommands = [];
         }
 
-        // Iterative depth-first pre-order walk over the source subtree. For each node:
-        //   - Emit SetNodeProperties if a stale record exists AND the target variant already exists.
-        //     (Missing target → defer to CreateNodeVariant + hook cascade.)
+        // In force mode, first ensure the entry node exists in the target, then force-retranslate
+        // all its translatable properties. This is done before the descendant walk so that
+        // children see the entry variant already in place.
+        $variantCommands = [];
+        if ($force) {
+            $entryNode = $sourceSubtree->node;
+            $targetEntryNode = $targetSubgraph->findNodeById($entryNode->aggregateId);
+            $entryExistsInTarget = $targetEntryNode !== null && $targetEntryNode->originDimensionSpacePoint->equals($targetDimensionSpacePoint);
+
+            if (!$entryExistsInTarget) {
+                $variantCommands[] = CreateNodeVariant::create(
+                    $entryNode->workspaceName,
+                    $entryNode->aggregateId,
+                    $entryNode->originDimensionSpacePoint,
+                    OriginDimensionSpacePoint::fromDimensionSpacePoint($targetSubgraph->getDimensionSpacePoint()),
+                );
+            } else {
+                $entryNodeType = $nodeTypeManager->getNodeType($entryNode->nodeTypeName);
+                if ($entryNodeType !== null) {
+                    $directive = $this->nodeTypeTranslationDirectiveFactory->createForNodeType($entryNodeType);
+                    $entryPropertyNames = $directive->getPropertyNames();
+                    $entryTargetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetSubgraph->getDimensionSpacePoint());
+                    $command = $this->tryBuildSetNodeProperties(
+                        nodeTypeManager: $nodeTypeManager,
+                        sourceNode: $entryNode,
+                        stalePropertyNames: $entryPropertyNames,
+                        targetOrigin: $entryTargetOrigin,
+                        sourceDeeplLanguage: $sourceDeeplLanguage,
+                        targetDeeplLanguage: $targetDeeplLanguage,
+                    );
+                    if ($command !== null) {
+                        $propertyCommands[] = $command;
+                    }
+                }
+            }
+        }
+
+        // Iterative depth-first pre-order walk over the source subtree (skip the entry node in
+        // force mode — it was handled above). For each node:
+        //   - (stale mode) Emit SetNodeProperties if a stale record exists AND the target variant already exists.
+        //   - (force mode) Emit SetNodeProperties if the node exists in target AND is not Document.
         //   - Emit CreateNodeVariant if the target variant is missing AND the node is non-tethered.
         //     Tethered descendants come along automatically with their ancestor variant.
         //
         // Children are pushed onto the stack in reverse so they pop in declaration order
         // (preserves pre-order; matches event-index assertions in the Behat tests).
-        $nodeTypeManager = $cr->getNodeTypeManager();
-        $stalePropertyCommands = [];
-        $variantCommands = [];
-        $stack = [$sourceSubtree];
+        $stack = $force
+            ? [...array_reverse([...$sourceSubtree->children])]
+            : [$sourceSubtree];
         while ($stack !== []) {
             $currentSubtree = array_pop($stack);
             $sourceNode = $currentSubtree->node;
-            $existsInTarget = $targetSubgraph->findNodeById($sourceNode->aggregateId) !== null;
+            $targetNode = $targetSubgraph->findNodeById($sourceNode->aggregateId);
+            $existsInTarget = $targetNode !== null && $targetNode->originDimensionSpacePoint->equals($targetDimensionSpacePoint);
 
-            $stale = $staleByNodeAggregateId[$sourceNode->aggregateId->value] ?? null;
-            if ($stale !== null && $existsInTarget) {
-                $command = $this->tryBuildSetNodeProperties(
-                    nodeTypeManager: $nodeTypeManager,
-                    sourceNode: $sourceNode,
-                    stalePropertyNames: $stale->propertyNames,
-                    // Use the OriginDimensionSpacePoint from the stale record, not a freshly built
-                    // one — it reflects where the variant actually lives (matters for spec/gen
-                    // variants).
-                    targetOrigin: $stale->originDimensionSpacePoint,
-                    sourceDeeplLanguage: $sourceDeeplLanguage,
-                    targetDeeplLanguage: $targetDeeplLanguage,
-                );
-                if ($command !== null) {
-                    $stalePropertyCommands[] = $command;
+            if ($existsInTarget) {
+                $propertyNames = null;
+                $targetOrigin = null;
+
+                if ($force) {
+                    $nodeType = $nodeTypeManager->getNodeType($sourceNode->nodeTypeName);
+                    if ($nodeType !== null && !$nodeType->isOfType($nonDocumentNodeTypeName)) {
+                        $directive = $this->nodeTypeTranslationDirectiveFactory->createForNodeType($nodeType);
+                        $propertyNames = $directive->getPropertyNames();
+                        $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
+                    }
+                } else {
+                    $stale = $staleByNodeAggregateId[$sourceNode->aggregateId->value] ?? null;
+                    if ($stale !== null) {
+                        $propertyNames = $stale->propertyNames;
+                        // Use the OriginDimensionSpacePoint from the stale record, not a freshly built
+                        // one — it reflects where the variant actually lives (matters for spec/gen
+                        // variants).
+                        $targetOrigin = $stale->originDimensionSpacePoint;
+                    }
+                }
+
+                if ($propertyNames !== null && $targetOrigin !== null) {
+                    $command = $this->tryBuildSetNodeProperties(
+                        nodeTypeManager: $nodeTypeManager,
+                        sourceNode: $sourceNode,
+                        stalePropertyNames: $propertyNames,
+                        targetOrigin: $targetOrigin,
+                        sourceDeeplLanguage: $sourceDeeplLanguage,
+                        targetDeeplLanguage: $targetDeeplLanguage,
+                    );
+                    if ($command !== null) {
+                        $propertyCommands[] = $command;
+                    }
                 }
             }
 
@@ -209,16 +278,17 @@ class Retranslator
             }
         }
 
-        foreach ($stalePropertyCommands as $command) {
-            // Mark commands as "triggered by AI"
-            $this->dispatchAsAi($cr, $command);
-        }
+        // Create variants first so nodes exist in the target before we set their properties.
         foreach ($variantCommands as $command) {
             $cr->handle($command);
         }
+        foreach ($propertyCommands as $command) {
+            // Mark commands as "triggered by AI"
+            $this->dispatchAsAi($cr, $command);
+        }
 
         return new RetranslationResult(
-            stalePropertyCommandsDispatched: count($stalePropertyCommands),
+            stalePropertyCommandsDispatched: count($propertyCommands),
             variantCommandsDispatched: count($variantCommands),
         );
     }

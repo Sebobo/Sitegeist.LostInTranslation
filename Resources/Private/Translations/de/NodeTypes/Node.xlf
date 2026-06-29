@@ -7,8 +7,8 @@
                 <target state="translated">Lost in Translation</target>
             </trans-unit>
             <trans-unit id="views.retranslate" xml:space="preserve" approved="yes">
-                <source>Retranslate</source>
-                <target state="translated">Neu übersetzen</target>
+                <source>Translate changes</source>
+                <target state="translated">Änderungen übersetzen</target>
             </trans-unit>
         </body>
     </file>

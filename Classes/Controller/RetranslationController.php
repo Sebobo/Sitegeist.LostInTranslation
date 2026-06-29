@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Sitegeist\LostInTranslation\Controller;
 
+use Neos\ContentRepository\Core\Dimension\ContentDimension;
 use Neos\ContentRepository\Core\Dimension\ContentDimensionId;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
@@ -61,6 +62,12 @@ class RetranslationController extends ActionController
         string $contentRepositoryId = 'default',
     ): string {
         $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepositoryId));
+
+        $dimensionNames = [];
+        foreach ($cr->getContentDimensionSource()->getContentDimensionsOrderedByPriority() as $contentDimension) {
+            $dimensionNames[$contentDimension->id->value] = $contentDimension->configuration['label'] ?? $contentDimension->id->value;
+        }
+
         $languageDimensionId = new ContentDimensionId($this->languageDimensionName);
         $languageDimension = $cr->getContentDimensionSource()->getDimension($languageDimensionId);
         if ($languageDimension === null) {
@@ -161,6 +168,7 @@ class RetranslationController extends ActionController
             'referenceLanguage' => $referenceLabel !== null ? ['label' => $referenceLabel] : null,
             'staleNodeCount' => $staleNodeCount,
             'specializations' => $specializations,
+            'dimensionNames' => $dimensionNames,
         ]);
     }
 
@@ -172,6 +180,7 @@ class RetranslationController extends ActionController
         string $workspaceName,
         string $targetCoordinates,
         string $contentRepositoryId = 'default',
+        bool $force = false,
     ): string {
         /** @var array<string, string> $coordinatesArray */
         $coordinatesArray = \json_decode($targetCoordinates, true, flags: JSON_THROW_ON_ERROR);
@@ -180,6 +189,7 @@ class RetranslationController extends ActionController
             WorkspaceName::fromString($workspaceName),
             NodeAggregateId::fromString($nodeAggregateId),
             DimensionSpacePoint::fromArray($coordinatesArray),
+            $force,
         );
 
         return $this->jsonResponse([

@@ -6,7 +6,7 @@
                 <source>Lost in Translation</source>
             </trans-unit>
             <trans-unit id="views.retranslate" xml:space="preserve">
-                <source>Retranslate</source>
+                <source>Translate changes</source>
             </trans-unit>
         </body>
     </file>
