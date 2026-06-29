@@ -60,9 +60,9 @@ Also, automatic translation for all types derived from `Neos.Neos:Node` is enabl
 
 This package adds a Retranslate View to both `Neos.Neos:Document` and `Neos.Neos:Node`.
 
-If the active language preset has `options.referenceLanguage` configured, the view checks whether the current
-translation is up to date compared to that reference language. If it is outdated, editors can trigger a retranslation
-directly in the inspector.
+If the active language preset has `options.referenceLanguage` configured or is a spezialisation, the view checks 
+whether the current translation is up to date compared to that reference language. If it is outdated, editors can 
+trigger a retranslation directly in the inspector.
 
 The resulting changes are created in the current workspace and can be reviewed via the normal editing and publishing
 workflow.

@@ -32,7 +32,7 @@ use Sitegeist\LostInTranslation\Domain\Retranslator;
  *  - `retranslateNode` delegates to {@see Retranslator} (same path as the CLI command).
  *
  * The reference language is derived from the target preset's `referenceLanguage` configuration via
- * {@see ReferenceDimensionSpacePointResolver}; if the target has no reference language configured
+ * {@see ReferenceDimensionSpacePointResolver} or from its generalization; if the target has no reference language configured
  * (e.g. the source language itself) the UI is told there's nothing to compare against.
  */
 class RetranslationController extends ActionController

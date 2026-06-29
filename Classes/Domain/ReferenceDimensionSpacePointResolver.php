@@ -27,15 +27,19 @@ final readonly class ReferenceDimensionSpacePointResolver
             return null;
         }
 
-        $languageValue = $dimensionSpacePoint->coordinates[$this->languageDimensionId->value] ?? null;
-        if ($languageValue === null) {
+        $targetLanguageValue = $dimensionSpacePoint->coordinates[$this->languageDimensionId->value] ?? null;
+        if ($targetLanguageValue === null) {
             return null;
         }
 
-        foreach ($languageDimension->values as $language) {
-            if (($language->configuration['referenceLanguage'] ?? null) === $languageValue) {
+        foreach ($languageDimension->values as $targetLanguage) {
+            $referenceLanguage = $targetLanguage->configuration['referenceLanguage'] ?? null;
+            if ($referenceLanguage === null && !$targetLanguage->specializationDepth->isZero()) {
+                $referenceLanguage = $languageDimension->getGeneralization($targetLanguage)?->value;
+            }
+            if ($referenceLanguage === $targetLanguageValue) {
                 $coordinates = $dimensionSpacePoint->coordinates;
-                $coordinates[$this->languageDimensionId->value] = $language->value;
+                $coordinates[$this->languageDimensionId->value] = $targetLanguage->value;
                 $targetDimensionSpacePoint = DimensionSpacePoint::fromArray($coordinates);
 
                 return $this->allowedDimensionSubspace->contains($targetDimensionSpacePoint)
@@ -61,6 +65,10 @@ final readonly class ReferenceDimensionSpacePointResolver
 
         $language = $languageDimension->getValue($languageValue);
         $sourceLanguageValue = $language->configuration['referenceLanguage'] ?? null;
+        if (($sourceLanguageValue === null) && !$language->specializationDepth->isZero()) {
+            $sourceLanguageValue = $languageDimension->getGeneralization($language)?->value;
+        }
+
         if ($sourceLanguageValue === null) {
             return null;
         }
