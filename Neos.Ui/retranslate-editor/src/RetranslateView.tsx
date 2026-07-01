@@ -29,6 +29,7 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
 
     const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
     const [resultDialog, setResultDialog] = useState<ResultDialogState | null>(null);
+    const [activeButton, setActiveButton] = useState<'translate' | 'force' | null>(null);
 
     const translateMutation = useMutation({
         mutationFn: async (params: { targetCoordinates: Record<string, string>; force?: boolean }) => {
@@ -67,7 +68,8 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
                 title: t('dialog.error', 'Translation Failed', {}, 'Sitegeist.LostInTranslation', 'Main'),
                 message: error.message || 'An unknown error occurred',
             });
-        }
+        },
+        onSettled: () => setActiveButton(null),
     });
 
     const closeDialog = useCallback(() => setResultDialog(null), [setResultDialog]);
@@ -113,32 +115,44 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
                     options={options}
                     value={currentValue}
                     onValueChange={(value: string) => setSelectedTarget(value)}
+                    disabled={translateMutation.isLoading}
                 />
                 {selectedSpec && (
                     <ButtonsContainer>
-                        {translateMutation.isPending ? (
-                            <LoadingContainer>
-                                <Spinner/>
-                                <Info>
+                        <Button
+                            onClick={() => {
+                                setActiveButton('translate');
+                                translateMutation.mutate({targetCoordinates: selectedSpec.targetCoordinates});
+                            }}
+                            disabled={translateMutation.isLoading || selectedSpec.staleNodeCount === 0}
+                        >
+                            {translateMutation.isLoading && activeButton === 'translate' ? (
+                                <LoadingContainer>
+                                    <Spinner/>
                                     {t('view.translating', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
-                                </Info>
-                            </LoadingContainer>
-                        ) : (
-                            <ButtonsContainer>
-                                <Button
-                                    onClick={() => translateMutation.mutate({targetCoordinates: selectedSpec.targetCoordinates})}
-                                    disabled={selectedSpec.staleNodeCount === 0}
-                                >
-                                    {t('button.translate', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
-                                </Button>
-                                <Button onClick={() => translateMutation.mutate({
-                                    targetCoordinates: selectedSpec.targetCoordinates,
-                                    force: true
-                                })}>
-                                    {t('button.forceTranslate', 'Force', {}, 'Sitegeist.LostInTranslation', 'Main')}
-                                </Button>
-                            </ButtonsContainer>
-                        )}
+                                </LoadingContainer>
+                            ) : (
+                                t('button.translate', '', {}, 'Sitegeist.LostInTranslation', 'Main')
+                            )}
+                        </Button>
+                        <Button onClick={() => {
+                            setActiveButton('force');
+                            translateMutation.mutate({
+                                targetCoordinates: selectedSpec.targetCoordinates,
+                                force: true
+                            });
+                        }}
+                            disabled={translateMutation.isLoading}
+                        >
+                            {translateMutation.isLoading && activeButton === 'force' ? (
+                                <LoadingContainer>
+                                    <Spinner/>
+                                    {t('view.translating', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                                </LoadingContainer>
+                            ) : (
+                                t('button.forceTranslate', 'Force', {}, 'Sitegeist.LostInTranslation', 'Main')
+                            )}
+                        </Button>
                     </ButtonsContainer>
                 )}
             </Container>
