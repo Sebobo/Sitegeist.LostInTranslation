@@ -240,7 +240,12 @@ class StaleTranslationProjection implements ProjectionInterface
             }
         }
 
-        if ($targetDimensionSpacePoint) {
+        if ($staleTranslations === []) {
+            $this->logger?->debug(sprintf(
+                'StaleProjection: no initial translatable values for node "%s", skipping stale record',
+                $event->nodeAggregateId->value,
+            ));
+        } elseif ($targetDimensionSpacePoint) {
             $this->dbal->insert(
                 $this->itemTableName,
                 [
