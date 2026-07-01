@@ -29,3 +29,12 @@ Sitegeist\LostInTranslation\ContentRepository\StaleTranslationProjection\StaleTr
         factoryMethodName: 'getConnection'
     2:
       setting: Sitegeist.LostInTranslation.nodeTranslation.languageDimensionName
+
+'Sitegeist.LostInTranslation:TranslationLogger':
+  className: Psr\Log\LoggerInterface
+  scope: singleton
+  factoryObjectName: Neos\Flow\Log\PsrLoggerFactoryInterface
+  factoryMethodName: get
+  arguments:
+    1:
+      value: 'translationLogger'

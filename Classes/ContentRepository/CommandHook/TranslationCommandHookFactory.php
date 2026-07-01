@@ -16,6 +16,7 @@ use Sitegeist\LostInTranslation\ContentRepository\AuthProvider\AISystemTranslati
 use Sitegeist\LostInTranslation\Domain\Directive\DimensionValueDirectiveFactory;
 use Sitegeist\LostInTranslation\Domain\Directive\NodeTypeTranslationDirectiveFactory;
 use Sitegeist\LostInTranslation\Domain\TranslationServiceInterface;
+use Psr\Log\LoggerInterface;
 
 class TranslationCommandHookFactory implements CommandHookFactoryInterface
 {
@@ -27,6 +28,9 @@ class TranslationCommandHookFactory implements CommandHookFactoryInterface
 
     #[Flow\InjectConfiguration(path:'nodeTranslation.experimental-applyHtmlEntityDecodeAfterTranslation')]
     public bool $experimentalApplyHtmlEntityDecodeAfterTranslation;
+
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $logger;
 
     public function __construct(
         protected readonly ContentRepositoryRegistry $contentRepositoryRegistry,
@@ -55,6 +59,7 @@ class TranslationCommandHookFactory implements CommandHookFactoryInterface
                 $this->aiSystemTranslationRuntimeState,
                 $this->nodeUriPathSegmentGenerator,
                 $this->experimentalApplyHtmlEntityDecodeAfterTranslation,
+                $this->logger,
             );
         } else {
             throw new \Exception(sprintf('Language dimension %s was not found in content repository %s', $this->languageDimensionName, $commandHooksFactoryDependencies->contentRepositoryId->value));

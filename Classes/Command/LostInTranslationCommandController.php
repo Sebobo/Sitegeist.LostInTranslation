@@ -19,6 +19,7 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Cli\CommandController;
+use Psr\Log\LoggerInterface;
 use Neos\Flow\Cli\Exception\StopCommandException;
 use Neos\Flow\Security\Context;
 use Neos\Neos\Domain\SubtreeTagging\NeosVisibilityConstraints;
@@ -37,6 +38,9 @@ class LostInTranslationCommandController extends CommandController
 
     #[Flow\Inject]
     public Retranslator $retranslator;
+
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger')]
+    protected LoggerInterface $logger;
 
     /**
      * This command recursively copies content from the source to the target language dimension within the specified repository, workspace, and node path.
@@ -156,6 +160,14 @@ class LostInTranslationCommandController extends CommandController
         string $contentRepository,
         string $workspace,
     ): void {
+        $this->logger->debug(sprintf(
+            'retranslateNodeCommand: node="%s" target="%s" ws="%s" cr="%s"',
+            $nodeAggregateId,
+            $target,
+            $workspace,
+            $contentRepository,
+        ));
+
         $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
         $defaultDimensionConfiguration = $this->getDefaultDimensionConfiguration($cr);
 
@@ -184,6 +196,10 @@ class LostInTranslationCommandController extends CommandController
 
         // Distinct messages for skip / no-op / dispatched so misconfiguration is visible from CLI.
         if ($result->skippedReason !== null) {
+            $this->logger->debug(sprintf(
+                'retranslateNodeCommand skipped: "%s"',
+                $result->skippedReason,
+            ));
             $this->outputLine(
                 'Retranslation for node "%s" -> "%s" skipped: %s',
                 [$nodeAggregateId, $target, $result->skippedReason]
@@ -191,12 +207,18 @@ class LostInTranslationCommandController extends CommandController
             return;
         }
         if ($result->isNoOp()) {
+            $this->logger->debug('retranslateNodeCommand: no-op (nothing to retranslate)');
             $this->outputLine(
                 'Retranslation for node "%s" -> "%s": nothing to do (no stale properties, no missing variants).',
                 [$nodeAggregateId, $target]
             );
             return;
         }
+        $this->logger->info(sprintf(
+            'retranslateNodeCommand dispatched: %d stale + %d variant',
+            $result->stalePropertyCommandsDispatched,
+            $result->variantCommandsDispatched,
+        ));
         $this->outputLine(
             'Retranslation for node "%s" -> "%s": dispatched %d stale property update(s) and %d variant creation(s).',
             [$nodeAggregateId, $target, $result->stalePropertyCommandsDispatched, $result->variantCommandsDispatched],

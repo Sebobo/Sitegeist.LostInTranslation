@@ -41,6 +41,7 @@ use Neos\EventStore\Model\EventEnvelope;
 use Neos\Flow\Annotations as Flow;
 use Sitegeist\LostInTranslation\Domain\Directive\NodeTypeTranslationDirectiveFactory;
 use Sitegeist\LostInTranslation\Domain\ReferenceDimensionSpacePointResolver;
+use Psr\Log\LoggerInterface;
 
 /**
  * @internal Only for consumption inside LostInTranslation.
@@ -63,6 +64,7 @@ class StaleTranslationProjection implements ProjectionInterface
         private readonly ReferenceDimensionSpacePointResolver $referenceDimensionSpacePointResolver,
         private readonly NodeTypeTranslationDirectiveFactory $nodeTypeTranslationDirectiveFactory,
         private readonly NodeTypeManager $nodeTypeManager,
+        private readonly ?LoggerInterface $logger = null,
     ) {
         $this->itemTableName = $this->tableNamePrefix;
         $this->workspaceHierarchyTableName = $this->tableNamePrefix . '_ws_hierarchy';
@@ -249,6 +251,16 @@ class StaleTranslationProjection implements ProjectionInterface
                     'propertyNames' => \json_encode($staleTranslations),
                 ],
             );
+            $this->logger?->debug(sprintf(
+                'StaleProjection: inserted stale record for node "%s" into target %s',
+                $event->nodeAggregateId->value,
+                $targetDimensionSpacePoint->toJson(),
+            ));
+        } else {
+            $this->logger?->debug(sprintf(
+                'StaleProjection: no target DSP for node "%s", no stale record created',
+                $event->nodeAggregateId->value,
+            ));
         }
     }
 
@@ -309,6 +321,10 @@ class StaleTranslationProjection implements ProjectionInterface
                             'originDimensionSpacePointHash' => $event->originDimensionSpacePoint->hash,
                         ]
                     );
+                    $this->logger?->debug(sprintf(
+                        'StaleProjection: cleared stale record for node "%s" (all properties updated)',
+                        $event->nodeAggregateId->value,
+                    ));
                 } else {
                     $this->dbal->update(
                         $this->itemTableName,
@@ -321,6 +337,11 @@ class StaleTranslationProjection implements ProjectionInterface
                             'originDimensionSpacePointHash' => $event->originDimensionSpacePoint->hash,
                         ]
                     );
+                    $this->logger?->debug(sprintf(
+                        'StaleProjection: updated stale record for node "%s": %d properties remaining',
+                        $event->nodeAggregateId->value,
+                        count($remainingPropertyNames),
+                    ));
                 }
             }
         });
@@ -361,6 +382,10 @@ class StaleTranslationProjection implements ProjectionInterface
                                 'originDimensionSpacePointHash' => $targetDimensionSpacePoint->hash,
                             ]
                         );
+                        $this->logger?->debug(sprintf(
+                            'StaleProjection: cleared target stale record for node "%s" (all properties updated)',
+                            $event->nodeAggregateId->value,
+                        ));
                     } else {
                         $this->dbal->update(
                             $this->itemTableName,
@@ -373,6 +398,11 @@ class StaleTranslationProjection implements ProjectionInterface
                                 'originDimensionSpacePointHash' => $targetDimensionSpacePoint->hash,
                             ]
                         );
+                        $this->logger?->debug(sprintf(
+                            'StaleProjection: updated target stale record for node "%s": %d properties',
+                            $event->nodeAggregateId->value,
+                            count($newPropertyNames),
+                        ));
                     }
                 } else {
                     $newPropertyNames = array_intersect(
@@ -391,6 +421,11 @@ class StaleTranslationProjection implements ProjectionInterface
                                 'propertyNames' => \json_encode($newPropertyNames),
                             ],
                         );
+                        $this->logger?->debug(sprintf(
+                            'StaleProjection: inserted target stale record for node "%s": %d properties',
+                            $event->nodeAggregateId->value,
+                            count($newPropertyNames),
+                        ));
                     }
                 }
             });

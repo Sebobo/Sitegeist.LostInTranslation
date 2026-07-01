@@ -23,6 +23,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\PropertyNames;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
+use Psr\Log\LoggerInterface;
 use Neos\Neos\Domain\Service\NodeTypeNameFactory;
 use Neos\Neos\Domain\SubtreeTagging\NeosVisibilityConstraints;
 use Neos\Neos\Utility\NodeUriPathSegmentGenerator;
@@ -68,6 +69,9 @@ class Retranslator
     #[Flow\InjectConfiguration(path: 'nodeTranslation.experimental-applyHtmlEntityDecodeAfterTranslation')]
     protected bool $experimentalApplyHtmlEntityDecodeAfterTranslation = false;
 
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $logger;
+
     /**
      * Retranslate the subtree below `$nodeAggregateId` into `$targetDimensionSpacePoint`.
      *
@@ -86,11 +90,23 @@ class Retranslator
         DimensionSpacePoint $targetDimensionSpacePoint,
         bool $force = false,
     ): RetranslationResult {
+        $this->logger->debug(sprintf(
+            'RetranslateNode: node="%s" -> target DSP %s (force="%s")',
+            $nodeAggregateId->value,
+            $targetDimensionSpacePoint->toJson(),
+            $force ? 'yes' : 'no',
+        ));
+
         $cr = $this->contentRepositoryRegistry->get($contentRepositoryId);
         $languageDimensionId = new ContentDimensionId($this->languageDimensionName);
 
         $languageDimension = $cr->getContentDimensionSource()->getDimension($languageDimensionId);
         if ($languageDimension === null) {
+            $this->logger->warning(sprintf(
+                'Language dimension "%s" not found in CR "%s"',
+                $this->languageDimensionName,
+                $contentRepositoryId->value,
+            ));
             return RetranslationResult::skipped(sprintf(
                 'language dimension "%s" not configured in CR "%s"',
                 $this->languageDimensionName,
@@ -105,11 +121,21 @@ class Retranslator
         );
         $sourceDimensionSpacePoint = $resolver->tryResolveSourceDimensionSpacePoint($targetDimensionSpacePoint);
         if ($sourceDimensionSpacePoint === null) {
+            $this->logger->debug(sprintf(
+                'No reference language for target DSP %s',
+                $targetDimensionSpacePoint->toJson(),
+            ));
             return RetranslationResult::skipped(sprintf(
                 'no referenceLanguage configured for target DSP %s',
                 $targetDimensionSpacePoint->toJson(),
             ));
         }
+
+        $this->logger->debug(sprintf(
+            'Resolved source DSP %s for target DSP %s',
+            $sourceDimensionSpacePoint->toJson(),
+            $targetDimensionSpacePoint->toJson(),
+        ));
 
         $dimensionValueDirectiveFactory = new DimensionValueDirectiveFactory();
         $sourceDeeplLanguage = $dimensionValueDirectiveFactory->tryCreateForDimensionAndOriginDimensionSpacePoint(
@@ -121,12 +147,23 @@ class Retranslator
             OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint),
         )?->deeplTargetId;
         if ($sourceDeeplLanguage === null || $targetDeeplLanguage === null) {
+            $this->logger->debug(sprintf(
+                'DeepL language not resolvable: source=%s target=%s',
+                $sourceDimensionSpacePoint->toJson(),
+                $targetDimensionSpacePoint->toJson(),
+            ));
             return RetranslationResult::skipped(sprintf(
                 'DeepL language not resolvable for source %s or target %s',
                 $sourceDimensionSpacePoint->toJson(),
                 $targetDimensionSpacePoint->toJson(),
             ));
         }
+
+        $this->logger->debug(sprintf(
+            'DeepL languages: source="%s" target="%s"',
+            $sourceDeeplLanguage,
+            $targetDeeplLanguage,
+        ));
 
         $contentGraph = $cr->getContentGraph($workspaceName);
         $sourceSubgraph = $contentGraph->getSubgraph($sourceDimensionSpacePoint, NeosVisibilityConstraints::excludeRemoved());
@@ -143,12 +180,24 @@ class Retranslator
             ),
         );
         if ($sourceSubtree === null) {
+            $this->logger->debug(sprintf(
+                'Source node "%s" not found in DSP %s',
+                $nodeAggregateId->value,
+                $sourceDimensionSpacePoint->toJson(),
+            ));
             return RetranslationResult::skipped(sprintf(
                 'source node %s not found in DSP %s',
                 $nodeAggregateId->value,
                 $sourceDimensionSpacePoint->toJson(),
             ));
         }
+
+        $subtreeNodeCount = count($sourceSubtree->children) + 1;
+
+        $this->logger->debug(sprintf(
+            'Source subtree found: %d nodes',
+            $subtreeNodeCount,
+        ));
 
         $nodeTypeManager = $cr->getNodeTypeManager();
         $nonDocumentNodeTypeName = NodeTypeNameFactory::forDocument();
@@ -170,6 +219,10 @@ class Retranslator
                 $staleByNodeAggregateId[$staleTranslation->nodeAggregateId->value] = $staleTranslation;
             }
             $propertyCommands = [];
+            $this->logger->debug(sprintf(
+                'Stale mode: %d stale records for subtree',
+                count($staleTranslations->items),
+            ));
         }
 
         // In force mode, first ensure the entry node exists in the target, then force-retranslate
@@ -182,6 +235,10 @@ class Retranslator
             $entryExistsInTarget = $targetEntryNode !== null && $targetEntryNode->originDimensionSpacePoint->equals($targetDimensionSpacePoint);
 
             if (!$entryExistsInTarget) {
+                $this->logger->debug(sprintf(
+                    'Force: entry node "%s" missing in target, dispatching CreateNodeVariant',
+                    $entryNode->aggregateId->value,
+                ));
                 $variantCommands[] = CreateNodeVariant::create(
                     $entryNode->workspaceName,
                     $entryNode->aggregateId,
@@ -203,8 +260,23 @@ class Retranslator
                         targetDeeplLanguage: $targetDeeplLanguage,
                     );
                     if ($command !== null) {
+                        $this->logger->debug(sprintf(
+                            'Force: SetNodeProperties for entry node "%s" with %d property(s)',
+                            $entryNode->aggregateId->value,
+                            count($entryPropertyNames),
+                        ));
                         $propertyCommands[] = $command;
+                    } else {
+                        $this->logger->debug(sprintf(
+                            'Force: tryBuildSetNodeProperties returned null for entry node "%s"',
+                            $entryNode->aggregateId->value,
+                        ));
                     }
+                } else {
+                    $this->logger->debug(sprintf(
+                        'Force: entry node "%s" nodeType not found',
+                        $entryNode->aggregateId->value,
+                    ));
                 }
             }
         }
@@ -227,6 +299,8 @@ class Retranslator
             $targetNode = $targetSubgraph->findNodeById($sourceNode->aggregateId);
             $existsInTarget = $targetNode !== null && $targetNode->originDimensionSpacePoint->equals($targetDimensionSpacePoint);
 
+            $logContext = ['nodeId' => $sourceNode->aggregateId->value];
+
             if ($existsInTarget) {
                 $propertyNames = null;
                 $targetOrigin = null;
@@ -237,6 +311,9 @@ class Retranslator
                         $directive = $this->nodeTypeTranslationDirectiveFactory->createForNodeType($nodeType);
                         $propertyNames = $directive->getPropertyNames();
                         $targetOrigin = OriginDimensionSpacePoint::fromDimensionSpacePoint($targetDimensionSpacePoint);
+                        $action = 'force';
+                    } else {
+                        $action = 'force_skip_document';
                     }
                 } else {
                     $stale = $staleByNodeAggregateId[$sourceNode->aggregateId->value] ?? null;
@@ -246,10 +323,14 @@ class Retranslator
                         // one — it reflects where the variant actually lives (matters for spec/gen
                         // variants).
                         $targetOrigin = $stale->originDimensionSpacePoint;
+                        $action = 'stale';
+                    } else {
+                        $action = 'no_stale';
                     }
                 }
 
                 if ($propertyNames !== null && $targetOrigin !== null) {
+                    $logContext['action'] = $action;
                     $command = $this->tryBuildSetNodeProperties(
                         nodeTypeManager: $nodeTypeManager,
                         sourceNode: $sourceNode,
@@ -259,18 +340,46 @@ class Retranslator
                         targetDeeplLanguage: $targetDeeplLanguage,
                     );
                     if ($command !== null) {
+                        $logContext['propertyCount'] = $propertyNames->count();
+                        $this->logger->debug(sprintf(
+                            'Walk: SetNodeProperties for node "%s" (action="%s", %d props)',
+                            $logContext['nodeId'],
+                            $logContext['action'],
+                            $logContext['propertyCount'] ?? 0,
+                        ));
                         $propertyCommands[] = $command;
+                    } else {
+                        $this->logger->debug(sprintf(
+                            'Walk: tryBuildSetNodeProperties null for node "%s" (action="%s")',
+                            $logContext['nodeId'],
+                            $logContext['action'],
+                        ));
                     }
+                } else {
+                    $this->logger->debug(sprintf(
+                        'Walk: node "%s" existsInTarget, action="%s"',
+                        $sourceNode->aggregateId->value,
+                        $action,
+                    ));
                 }
             }
 
             if (!$existsInTarget && !$sourceNode->classification->isTethered()) {
+                $this->logger->debug(sprintf(
+                    'Walk: CreateNodeVariant for node "%s"',
+                    $sourceNode->aggregateId->value,
+                ));
                 $variantCommands[] = CreateNodeVariant::create(
                     $sourceNode->workspaceName,
                     $sourceNode->aggregateId,
                     $sourceNode->originDimensionSpacePoint,
                     OriginDimensionSpacePoint::fromDimensionSpacePoint($targetSubgraph->getDimensionSpacePoint()),
                 );
+            } elseif (!$existsInTarget) {
+                $this->logger->debug(sprintf(
+                    'Walk: node "%s" not in target and tethered — skipping variant',
+                    $sourceNode->aggregateId->value,
+                ));
             }
 
             foreach (array_reverse([...$currentSubtree->children]) as $childSubtree) {
@@ -287,9 +396,18 @@ class Retranslator
             $this->dispatchAsAi($cr, $command);
         }
 
+        $staleCount = count($propertyCommands);
+        $variantCount = count($variantCommands);
+        $this->logger->info(sprintf(
+            'RetranslateNode complete: %d variant(s) and %d property command(s) dispatched for node "%s"',
+            $variantCount,
+            $staleCount,
+            $nodeAggregateId->value,
+        ));
+
         return new RetranslationResult(
-            stalePropertyCommandsDispatched: count($propertyCommands),
-            variantCommandsDispatched: count($variantCommands),
+            stalePropertyCommandsDispatched: $staleCount,
+            variantCommandsDispatched: $variantCount,
         );
     }
 
@@ -318,6 +436,10 @@ class Retranslator
         // Defensive: projection guarantees the node type existed when the record was written.
         // If it's since been removed, we can't resolve the connector for non-string props.
         if ($nodeType === null) {
+            $this->logger->debug(sprintf(
+                'tryBuildSetNodeProperties: nodeType not found for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
         $directive = $this->nodeTypeTranslationDirectiveFactory->createForNodeType($nodeType);
@@ -330,6 +452,12 @@ class Retranslator
             }
             $sourceValue = $sourceNode->getProperty($propertyName);
             if ($sourceValue === null || (is_string($sourceValue) && trim($sourceValue) === '')) {
+                $this->logger->debug(sprintf(
+                    'tryBuildSetNodeProperties: empty source for property "%s" on node "%s" (isNull="%s")',
+                    $propertyName->value,
+                    $sourceNode->aggregateId->value,
+                    $sourceValue === null ? 'yes' : 'no',
+                ));
                 continue;
             }
 
@@ -345,6 +473,10 @@ class Retranslator
         }
 
         if ($propertiesToTranslate === []) {
+            $this->logger->debug(sprintf(
+                'tryBuildSetNodeProperties: no translatable properties with values for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
 
@@ -393,9 +525,18 @@ class Retranslator
         }
 
         if ($propertiesToSet === []) {
+            $this->logger->debug(sprintf(
+                'tryBuildSetNodeProperties: all translated properties empty for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
 
+        $this->logger->debug(sprintf(
+            'tryBuildSetNodeProperties: SetNodeProperties for node "%s" with %d properties',
+            $sourceNode->aggregateId->value,
+            count($propertiesToSet),
+        ));
         return SetNodeProperties::create(
             workspaceName: $sourceNode->workspaceName,
             nodeAggregateId: $sourceNode->aggregateId,

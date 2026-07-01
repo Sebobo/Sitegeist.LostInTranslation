@@ -21,6 +21,7 @@ use Neos\ContentRepository\Core\Projection\ContentGraph\Node;
 use Neos\ContentRepository\Core\Projection\ContentGraph\VisibilityConstraints;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\Neos\Utility\NodeUriPathSegmentGenerator;
+use Psr\Log\LoggerInterface;
 use Sitegeist\LostInTranslation\ContentRepository\AuthProvider\AISystemTranslationRuntimeState;
 use Sitegeist\LostInTranslation\Domain\Directive\DimensionValueDirectiveFactory;
 use Sitegeist\LostInTranslation\Domain\Directive\NodeTypeTranslationDirectiveFactory;
@@ -41,6 +42,7 @@ final class TranslationCommandHook implements CommandHookInterface
         private readonly AISystemTranslationRuntimeState $aiSystemTranslationRuntimeState,
         private readonly NodeUriPathSegmentGenerator $nodeUriPathSegmentGenerator,
         private readonly bool $experimentalApplyHtmlEntityDecodeAfterTranslation,
+        private readonly ?LoggerInterface $logger = null,
     ) {
     }
 
@@ -82,9 +84,27 @@ final class TranslationCommandHook implements CommandHookInterface
         $sourceDeeplLanguage = $sourceLanguageDirective?->deeplSourceId;
         $targetDeeplLanguage = $targetLanguageDirective?->deeplTargetId;
 
+        $this->logger?->debug(sprintf(
+            'TranslationHook: CreateNodeVariant for node "%s", sourceOSP=%s targetOSP=%s',
+            $command->nodeAggregateId->value,
+            $command->sourceOrigin->toJson(),
+            $command->targetOrigin->toJson(),
+        ));
+
         if ($sourceDeeplLanguage === null || $targetDeeplLanguage === null) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: DeepL language not configured for source=%s or target=%s',
+                $command->sourceOrigin->toJson(),
+                $command->targetOrigin->toJson(),
+            ));
             return Commands::createEmpty();
         }
+
+        $this->logger?->debug(sprintf(
+            'TranslationHook: DeepL source="%s" target="%s"',
+            $sourceDeeplLanguage,
+            $targetDeeplLanguage,
+        ));
 
         $command->targetOrigin->getCoordinate($this->languageDimension->id);
         $sourceSubgraph = $this->contentGraphReadModel
@@ -92,11 +112,19 @@ final class TranslationCommandHook implements CommandHookInterface
             ->getSubgraph($command->sourceOrigin->toDimensionSpacePoint(), VisibilityConstraints::withoutRestrictions());
         $sourceNode = $sourceSubgraph->findNodeById($command->nodeAggregateId);
         if ($sourceNode === null) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: source node "%s" not found in subgraph',
+                $command->nodeAggregateId->value,
+            ));
             return Commands::createEmpty();
         }
 
         $nodeType = $this->nodeTypeManager->getNodeType($sourceNode->nodeTypeName);
         if ($nodeType === null) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: node type not found for node "%s"',
+                $command->nodeAggregateId->value,
+            ));
             return Commands::createEmpty();
         }
 
@@ -179,6 +207,11 @@ final class TranslationCommandHook implements CommandHookInterface
         $translationDirective = $this->nodeTypeTranslationDirectiveFactory->createForNodeType($nodeType);
 
         if ($translationDirective->enabled === false) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: translation disabled for nodeType "%s" on node "%s"',
+                $nodeType->name->value,
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
 
@@ -189,6 +222,11 @@ final class TranslationCommandHook implements CommandHookInterface
                 $propertyName = $translatablePropertyName->propertyName->value;
                 $sourceValue = $sourceNode->getProperty($translatablePropertyName->propertyName);
                 if (empty($sourceValue) || (is_string($sourceValue) && trim($sourceValue) === '')) {
+                    $this->logger?->debug(sprintf(
+                        'TranslationHook: empty source for property "%s" on node "%s"',
+                        $propertyName,
+                        $sourceNode->aggregateId->value,
+                    ));
                     continue;
                 }
                 assert($propertyName !== '');
@@ -201,8 +239,18 @@ final class TranslationCommandHook implements CommandHookInterface
         }
 
         if (empty($propertiesToTranslate)) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: no translatable properties with values for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
+
+        $this->logger?->debug(sprintf(
+            'TranslationHook: translating %d properties for node "%s"',
+            count($propertiesToTranslate),
+            $sourceNode->aggregateId->value,
+        ));
 
         if (count($propertiesToTranslate) > 0) {
             $propertiesToTranslateDeflated = ArrayFlatteningUtility::deflate($propertiesToTranslate);
@@ -224,6 +272,10 @@ final class TranslationCommandHook implements CommandHookInterface
         }
 
         if (empty($translatedProperties)) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: translated properties empty after API call for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
 
@@ -254,8 +306,18 @@ final class TranslationCommandHook implements CommandHookInterface
         }
 
         if (empty($propertiesToSet)) {
+            $this->logger?->debug(sprintf(
+                'TranslationHook: no properties to set after reassembly for node "%s"',
+                $sourceNode->aggregateId->value,
+            ));
             return null;
         }
+
+        $this->logger?->debug(sprintf(
+            'TranslationHook: SetNodeProperties for node "%s" with %d properties',
+            $sourceNode->aggregateId->value,
+            count($propertiesToSet),
+        ));
 
         return SetNodeProperties::create(
             workspaceName: $command->workspaceName,

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Sitegeist\LostInTranslation\Controller;
 
-use Neos\ContentRepository\Core\Dimension\ContentDimension;
 use Neos\ContentRepository\Core\Dimension\ContentDimensionId;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
@@ -17,6 +16,7 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Mvc\Controller\ActionController;
+use Psr\Log\LoggerInterface;
 use Neos\Neos\Domain\SubtreeTagging\NeosVisibilityConstraints;
 use Sitegeist\LostInTranslation\ContentRepository\StaleTranslationProjection\StaleTranslationReadModel;
 use Sitegeist\LostInTranslation\Domain\ReferenceDimensionSpacePointResolver;
@@ -46,6 +46,9 @@ class RetranslationController extends ActionController
     #[Flow\InjectConfiguration(path: 'nodeTranslation.languageDimensionName')]
     protected string $languageDimensionName;
 
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $translationLogger;
+
     /**
      * Report whether translations for the given node into the target dimension are up to date,
      * together with metadata for every language specialization of the current dimension.
@@ -61,6 +64,14 @@ class RetranslationController extends ActionController
         string $coordinates,
         string $contentRepositoryId = 'default',
     ): string {
+        $this->translationLogger->debug(sprintf(
+            'getTranslationMetadata: node="%s" workspace="%s" coordinates=%s cr="%s"',
+            $nodeAggregateId,
+            $workspaceName,
+            $coordinates,
+            $contentRepositoryId,
+        ));
+
         $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepositoryId));
 
         $dimensionNames = [];
@@ -101,6 +112,12 @@ class RetranslationController extends ActionController
             $configuredLabel = $sourceLanguageDimensionValue?->configuration['label'] ?? null;
             $referenceLabel = is_string($configuredLabel) ? $configuredLabel : $sourceLanguageValue;
 
+            $this->translationLogger->debug(sprintf(
+                'getTranslationMetadata: source DSP resolved to %s (label: "%s")',
+                $sourceDimensionSpacePoint->toJson(),
+                $referenceLabel,
+            ));
+
             $contentGraph = $cr->getContentGraph(WorkspaceName::fromString($workspaceName));
             $sourceSubgraph = $contentGraph->getSubgraph(
                 $sourceDimensionSpacePoint,
@@ -121,7 +138,17 @@ class RetranslationController extends ActionController
                     ->findBySubtree($sourceSubtree, $targetOrigin);
                 $staleNodeCount = count($staleTranslations->items);
                 $isUpToDate = $staleNodeCount === 0;
+            } else {
+                $this->translationLogger->debug(sprintf(
+                    'getTranslationMetadata: source subtree not found for node "%s"',
+                    $nodeAggregateId,
+                ));
             }
+        } else {
+            $this->translationLogger->debug(sprintf(
+                'getTranslationMetadata: no source DSP resolved from %s',
+                $coordinates,
+            ));
         }
 
         // --- Part 2: specializations — coordinates as SOURCE, find its TARGETS ---
@@ -163,6 +190,12 @@ class RetranslationController extends ActionController
             }
         }
 
+        $this->translationLogger->debug(sprintf(
+            'getTranslationMetadata result: staleCount=%d specializations=%d',
+            $staleNodeCount,
+            count($specializations),
+        ));
+
         return $this->jsonResponse([
             'isUpToDate' => $isUpToDate,
             'referenceLanguage' => $referenceLabel !== null ? ['label' => $referenceLabel] : null,
@@ -184,6 +217,15 @@ class RetranslationController extends ActionController
     ): string {
         /** @var array<string, string> $coordinatesArray */
         $coordinatesArray = \json_decode($targetCoordinates, true, flags: JSON_THROW_ON_ERROR);
+
+        $this->translationLogger->debug(sprintf(
+            'retranslateNode: node="%s" target=%s force="%s" cr="%s"',
+            $nodeAggregateId,
+            $targetCoordinates,
+            $force ? 'yes' : 'no',
+            $contentRepositoryId,
+        ));
+
         $result = $this->retranslator->retranslateNode(
             ContentRepositoryId::fromString($contentRepositoryId),
             WorkspaceName::fromString($workspaceName),
@@ -191,6 +233,13 @@ class RetranslationController extends ActionController
             DimensionSpacePoint::fromArray($coordinatesArray),
             $force,
         );
+
+        $this->translationLogger->debug(sprintf(
+            'retranslateNode result: message="%s"',
+            $result->skippedReason !== null
+                ? sprintf('skipped: %s', $result->skippedReason)
+                : ($result->isNoOp() ? 'noop' : 'success'),
+        ));
 
         return $this->jsonResponse([
             'message' => $result->skippedReason !== null

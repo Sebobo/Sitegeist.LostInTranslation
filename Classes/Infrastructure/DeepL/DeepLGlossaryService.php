@@ -8,13 +8,12 @@ use DeepL\DeepLException;
 use DeepL\GlossaryEntries;
 use DeepL\GlossaryInfo;
 use DeepL\GlossaryLanguagePair;
+use Neos\Flow\Core\Bootstrap;
+use Neos\Flow\Log\PsrLoggerFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Sitegeist\LostInTranslation\Domain\Model\Glossary;
-use Sitegeist\LostInTranslation\Domain\Model\GlossaryLanguageKeys;
 use Sitegeist\LostInTranslation\Domain\Repository\GlossaryRepository;
 use Neos\Flow\Annotations as Flow;
-
-use function Symfony\Component\String\u;
 
 class DeepLGlossaryService
 {
@@ -32,7 +31,8 @@ class DeepLGlossaryService
      */
     protected $keepNumber = 2;
 
-    protected ?LoggerInterface $logger = null;
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $logger;
 
     public function __construct(
         private readonly DeeplClientFactory $deeplClientFactory,
@@ -40,15 +40,19 @@ class DeepLGlossaryService
     ) {
     }
 
-    public function injectLogger(LoggerInterface $logger): void
-    {
-        $this->logger = $logger;
-    }
-
     public function findGlossaryId(string $sourceLanguage, string $targetLanguage): ?string
     {
         $glossary = $this->glossaryRepository->findOneBySourceAndTargetLanguageKey($sourceLanguage, $targetLanguage);
-        return $glossary?->synchronizationIdentifier;
+        $glossaryId = $glossary?->synchronizationIdentifier;
+        if ($glossaryId !== null) {
+            $this->logger->debug(sprintf(
+                'Glossary found for "%s"->"%s": "%s"',
+                $sourceLanguage,
+                $targetLanguage,
+                $glossaryId,
+            ));
+        }
+        return $glossaryId;
     }
 
     /**
@@ -72,7 +76,7 @@ class DeepLGlossaryService
             );
             return $info->glossaryId;
         } catch (DeepLException $exception) {
-            $this->logger?->critical('DeeplException caught: ' . $exception->getMessage());
+            $this->logger->critical('DeeplException caught: ' . $exception->getMessage());
             return null;
         }
     }
@@ -90,7 +94,7 @@ class DeepLGlossaryService
             }
             return;
         } catch (DeepLException $exception) {
-            $this->logger?->critical('DeeplException caught: ' . $exception->getMessage());
+            $this->logger->critical('DeeplException caught: ' . $exception->getMessage());
             return;
         }
     }
@@ -110,7 +114,7 @@ class DeepLGlossaryService
                 fn(GlossaryInfo $remoteGlossaryInfo) => str_starts_with($remoteGlossaryInfo->name, $this->labelPrefix . self::PREFIX_SEPERATOR)
             ));
         } catch (DeepLException $exception) {
-            $this->logger?->critical('DeeplException caught: ' . $exception->getMessage());
+            $this->logger->critical('DeeplException caught: ' . $exception->getMessage());
             return [];
         }
     }
