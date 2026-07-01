@@ -1,4 +1,6 @@
-declare module '@neos-project/react-ui-components'
+declare module '@neos-project/react-ui-components' {
+    export const SelectBox_Option_MultiLineWithThumbnail: any;
+}
 declare module '@neos-project/neos-ui-i18n'
 declare module '@neos-project/neos-ui-redux-store' {
     type Action = {

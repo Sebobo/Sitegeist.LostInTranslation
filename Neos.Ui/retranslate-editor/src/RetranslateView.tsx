@@ -4,7 +4,7 @@ import {useI18n} from '@sitegeist/lostintranslation-neos-bridge';
 import {endpoints} from './hooks/backend';
 import {useContentInfo} from './hooks/useContentInfo';
 import {useNodeInfo} from './hooks/useNodeInfo';
-import {Button, Dialog, SelectBox} from '@neos-project/react-ui-components'
+import {Button, Dialog, SelectBox, SelectBox_Option_MultiLineWithThumbnail} from '@neos-project/react-ui-components'
 import {Container, Info, LoadingContainer, Spinner, ButtonsContainer, DialogContent} from './components';
 
 type RetranslateViewTarget = 'node' | 'document';
@@ -17,6 +17,17 @@ type ResultDialogState = {
     type: 'success' | 'warn' | 'error';
     title: string;
     message: string;
+};
+
+const TranslationOption = (props: { option: { label: string; secondaryLabel: string }; [key: string]: unknown }) => {
+    const {option} = props;
+    return (
+        <SelectBox_Option_MultiLineWithThumbnail
+            {...props}
+            label={option.label}
+            secondaryLabel={option.secondaryLabel}
+        />
+    );
 };
 
 export const RetranslateView = ({for: target}: RetranslateViewProps) => {
@@ -76,13 +87,22 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
 
     const reloadPage = useCallback(() => window.location.reload(), []);
 
+    const staleNodeLabel = (count: number) => t(
+        'view.staleNodes',
+        '',
+        {staleNodeCount: '' + count},
+        'Sitegeist.LostInTranslation',
+        'Main',
+    );
+
     const options = useMemo(() => contentData?.specializations.map((spec) => {
         const label = Object.keys(spec.targetCoordinates).map((key) => {
             return `${contentData.dimensionNames[key]}: ${spec.targetCoordinates[key].toUpperCase()}`;
-        }).join(' / ') + ' ' + t('view.staleNodes', '', {staleNodeCount: '' + spec.staleNodeCount}, 'Sitegeist.LostInTranslation', 'Main') + ')';
+        }).join(' / ');
         return {
             value: JSON.stringify(spec.targetCoordinates),
             label,
+            secondaryLabel: staleNodeLabel(spec.staleNodeCount),
         };
     }), [contentData?.specializations]);
 
@@ -116,6 +136,7 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
                     value={currentValue}
                     onValueChange={(value: string) => setSelectedTarget(value)}
                     disabled={translateMutation.isLoading}
+                    ListPreviewElement={TranslationOption}
                 />
                 {selectedSpec && (
                     <ButtonsContainer>
