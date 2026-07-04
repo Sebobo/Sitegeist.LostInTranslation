@@ -39,7 +39,7 @@ class LostInTranslationCommandController extends CommandController
     #[Flow\Inject]
     public Retranslator $retranslator;
 
-    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger')]
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
     protected LoggerInterface $logger;
 
     /**
