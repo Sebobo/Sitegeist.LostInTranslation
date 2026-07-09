@@ -159,6 +159,7 @@ class LostInTranslationCommandController extends CommandController
         string $target,
         string $contentRepository,
         string $workspace,
+        bool $force = false,
     ): void {
         $this->logger->debug(sprintf(
             'retranslateNodeCommand: node="%s" target="%s" ws="%s" cr="%s"',
@@ -192,6 +193,7 @@ class LostInTranslationCommandController extends CommandController
             WorkspaceName::fromString($workspace),
             NodeAggregateId::fromString($nodeAggregateId),
             $targetDimensionSpacePoint,
+            $force,
         );
 
         // Distinct messages for skip / no-op / dispatched so misconfiguration is visible from CLI.
