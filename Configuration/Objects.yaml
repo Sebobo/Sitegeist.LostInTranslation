@@ -17,3 +17,12 @@ Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLCustomAuthenticationKeySer
         arguments:
           1:
             value: Sitegeist_LostInTranslation_ApiKeyCache
+
+'Sitegeist.LostInTranslation:TranslationLogger':
+  className: Psr\Log\LoggerInterface
+  scope: singleton
+  factoryObjectName: Neos\Flow\Log\PsrLoggerFactoryInterface
+  factoryMethodName: get
+  arguments:
+    1:
+      value: 'translationLogger'

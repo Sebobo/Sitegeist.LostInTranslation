@@ -11,12 +11,13 @@ use DeepL\TranslateTextOptions;
 use DeepL\Usage as UsageResult;
 use Neos\Cache\Exception;
 use Neos\Flow\Tests\UnitTestCase;
+use Psr\Log\NullLogger;
 use Sitegeist\LostInTranslation\Domain\ApiStatus;
 use Sitegeist\LostInTranslation\Domain\TranslationServiceInterface;
 use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLAuthenticationKey;
 use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLAuthenticationKeyFactory;
-use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeeplClientFactory;
 use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLCacheService;
+use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeeplClientFactory;
 use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLGlossaryService;
 use Sitegeist\LostInTranslation\Infrastructure\DeepL\DeepLTranslationService;
 
@@ -31,7 +32,9 @@ class DeepLTranslationServiceTest extends UnitTestCase
     {
         $this->mockDeeplClientFactory = $this->createMock(DeeplClientFactory::class);
         $this->mockDeeplClient = $this->createMock(DeepLClient::class);
-        $this->mockDeeplClientFactory->expects(self::any())->method('createDeepLClient')->willReturn($this->mockDeeplClient);
+        $this->mockDeeplClientFactory->expects(self::any())->method('createDeepLClient')->willReturn(
+            $this->mockDeeplClient
+        );
 
         $this->mockDeeplAuthenticationKeyFactory = $this->createMock(DeepLAuthenticationKeyFactory::class);
 
@@ -39,6 +42,7 @@ class DeepLTranslationServiceTest extends UnitTestCase
             $this->mockDeeplClientFactory,
             $this->mockDeeplAuthenticationKeyFactory
         );
+        $this->inject($this->translationService, 'logger', new NullLogger());
     }
 
     public static function translateWillCorrectlyTranslateTextsDataProvider(): \Generator
@@ -82,8 +86,7 @@ class DeepLTranslationServiceTest extends UnitTestCase
         ?string $sourceLanguage,
         array $expectedTranslatedTexts,
         $response
-    ): void
-    {
+    ): void {
         $this->mockDeeplClient
             ->expects(self::once())
             ->method('translateText')
@@ -118,7 +121,7 @@ class DeepLTranslationServiceTest extends UnitTestCase
             ->method('translateText')
             ->with(['en_foo', 'en_bar', 'en_baz'], 'en', 'de', [TranslateTextOptions::GLOSSARY => 'en_de_glossary'])
             ->willReturn(
-            [
+                [
                     new TextResult('de_foo', 'en', 6),
                     new TextResult('de_bar', 'en', 6),
                     new TextResult('de_baz', 'en', 6)
@@ -215,7 +218,16 @@ class DeepLTranslationServiceTest extends UnitTestCase
         $this->mockDeeplClient
             ->expects(self::once())
             ->method('translateText')
-            ->with(['die <ignore>suppe</ignore> schmeckt', 'text <ignore>nudel</ignore>', '<ignore>nudel</ignore> text', 'other'], 'en', 'de')
+            ->with(
+                [
+                    'die <ignore>suppe</ignore> schmeckt',
+                    'text <ignore>nudel</ignore>',
+                    '<ignore>nudel</ignore> text',
+                    'other'
+                ],
+                'en',
+                'de'
+            )
             ->willReturn(
                 [
                     new TextResult('DE: die <ignore>suppe</ignore> schmeckt', 'en', 6),
@@ -251,7 +263,7 @@ class DeepLTranslationServiceTest extends UnitTestCase
             ->expects($expectedGetCount)
             ->method('get')
             ->willReturnCallback(
-                function (string $sourceText, ?string $sourceLanguage, string $targetLanguage,) {
+                function (string $sourceText, ?string $sourceLanguage, string $targetLanguage) {
                     $this->assertEquals('de', $targetLanguage);
                     $this->assertEquals('en', $sourceLanguage);
                     return match ($sourceText) {
@@ -281,9 +293,16 @@ class DeepLTranslationServiceTest extends UnitTestCase
             ->expects($expectedSetCount)
             ->method('set')
             ->willReturnCallback(
-                fn(string $sourceText, string $targetText, ?string $sourceLanguage, string $targetLanguage) => match ($expectedSetCount->getInvocationCount()) {
-                    1 => $this->assertEquals(['en_bar', 'de_bar', 'de', 'en'], [$sourceText, $targetText, $targetLanguage, $sourceLanguage]),
-                    2 => $this->assertEquals(['en_baz', 'de_baz', 'de', 'en'], [$sourceText, $targetText, $targetLanguage, $sourceLanguage]),
+                fn(
+                    string $sourceText,
+                    string $targetText,
+                    ?string $sourceLanguage,
+                    string $targetLanguage
+                ) => match ($expectedSetCount->getInvocationCount()) {
+                    1 => $this->assertEquals(['en_bar', 'de_bar', 'de', 'en'],
+                        [$sourceText, $targetText, $targetLanguage, $sourceLanguage]),
+                    2 => $this->assertEquals(['en_baz', 'de_baz', 'de', 'en'],
+                        [$sourceText, $targetText, $targetLanguage, $sourceLanguage]),
                     default => $this->fail('wtf')
                 }
             );
@@ -408,8 +427,11 @@ class DeepLTranslationServiceTest extends UnitTestCase
      * @dataProvider getApiStatusWorksCorrectlyDataProvider
      * @test
      */
-    public function getApiStatusWorksCorrectly(DeepLAuthenticationKey $apiKey, UsageResult $usage, ApiStatus $expectedStatus): void
-    {
+    public function getApiStatusWorksCorrectly(
+        DeepLAuthenticationKey $apiKey,
+        UsageResult $usage,
+        ApiStatus $expectedStatus
+    ): void {
         $this->mockDeeplAuthenticationKeyFactory
             ->expects(self::any())
             ->method('createDeepLAuthenticationKey')
@@ -437,15 +459,18 @@ class DeepLTranslationServiceTest extends UnitTestCase
 
         $apiStatus = $this->translationService->getStatus();
 
-        $this->assertEquals(new ApiStatus(
-            false,
-            0,
-            0,
-            false,
-            false,
-            false,
-            false
-        ), $apiStatus);
+        $this->assertEquals(
+            new ApiStatus(
+                false,
+                0,
+                0,
+                false,
+                false,
+                false,
+                false
+            ),
+            $apiStatus
+        );
     }
 
     /**
@@ -471,14 +496,17 @@ class DeepLTranslationServiceTest extends UnitTestCase
 
         $apiStatus = $this->translationService->getStatus();
 
-        $this->assertEquals(new ApiStatus(
-            false,
-            0,
-            0,
-            true,
-            false,
-            true,
-            false,
-        ), $apiStatus);
+        $this->assertEquals(
+            new ApiStatus(
+                false,
+                0,
+                0,
+                true,
+                false,
+                true,
+                false,
+            ),
+            $apiStatus
+        );
     }
 }

@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace Sitegeist\LostInTranslation\Infrastructure\DeepL;
 
-use DeepL\GlossaryEntries;
-use DeepL\TranslateTextOptions;
-use Neos\Flow\Annotations as Flow;
 use DeepL\DeepLException;
 use DeepL\TextResult;
+use DeepL\TranslateTextOptions;
+use Neos\Flow\Annotations as Flow;
 use Psr\Log\LoggerInterface;
 use Sitegeist\LostInTranslation\Domain\ApiStatus;
-use Sitegeist\LostInTranslation\Domain\Model\Glossary;
-use Sitegeist\LostInTranslation\Domain\Model\GlossaryLanguageKeys;
 use Sitegeist\LostInTranslation\Domain\TranslationServiceInterface;
 use Sitegeist\LostInTranslation\Utility\IgnoredTermsUtility;
 
@@ -23,10 +20,12 @@ class DeepLTranslationService implements TranslationServiceInterface
 {
     /**
      * @var array{defaultOptions?: array<string,mixed>, ignoredTerms?:array<string,string>}
- */
+     */
     protected array $settings = [];
 
-    protected ?LoggerInterface $logger = null;
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $logger;
+
     protected ?DeepLCacheService $translationCache = null;
     protected ?DeepLGlossaryService $glossaryService = null;
 
@@ -34,11 +33,6 @@ class DeepLTranslationService implements TranslationServiceInterface
         private readonly DeeplClientFactory $deeplClientFactory,
         private readonly DeepLAuthenticationKeyFactory $deeplAuthenticationKeyFactory,
     ) {
-    }
-
-    public function injectLogger(LoggerInterface $logger): void
-    {
-        $this->logger = $logger;
     }
 
     public function injectTranslationCache(DeepLCacheService $translationCache): void
@@ -68,6 +62,15 @@ class DeepLTranslationService implements TranslationServiceInterface
      */
     public function translate(array $texts, string $targetLanguage, ?string $sourceLanguage = null): array
     {
+        $this->logger->debug(
+            sprintf(
+                'DeepL translate: %d texts, source="%s" target="%s"',
+                count($texts),
+                $sourceLanguage ?? 'null',
+                $targetLanguage,
+            )
+        );
+
         // deepl api does throw critical errors when 'en' or 'pt' is used
         // this prevents that by defaulting to the most likely option
         if (strtolower($targetLanguage) === 'en') {
@@ -89,6 +92,12 @@ class DeepLTranslationService implements TranslationServiceInterface
         if ($sourceLanguage) {
             $glossaryId = $this->glossaryService?->findGlossaryId($sourceLanguage, $targetLanguage);
             if ($glossaryId) {
+                $this->logger->debug(
+                    sprintf(
+                        'DeepL translate: using glossary "%s"',
+                        $glossaryId,
+                    )
+                );
                 $translateTextOptions[TranslateTextOptions::GLOSSARY] = $glossaryId;
             }
         }
@@ -102,6 +111,13 @@ class DeepLTranslationService implements TranslationServiceInterface
                     unset($texts[$i]);
                 }
             }
+            $this->logger->debug(
+                sprintf(
+                    'DeepL translate: %d cache hits, %d uncached',
+                    count($cachedEntries),
+                    count($texts),
+                )
+            );
             if (empty($texts)) {
                 return $cachedEntries;
             }
@@ -139,7 +155,7 @@ class DeepLTranslationService implements TranslationServiceInterface
             }
 
             $translations = array_map(
-                fn (TextResult $textResult) => IgnoredTermsUtility::unwrapIgnoredTerms($textResult->text),
+                fn(TextResult $textResult) => IgnoredTermsUtility::unwrapIgnoredTerms($textResult->text),
                 $results
             );
 
@@ -156,7 +172,30 @@ class DeepLTranslationService implements TranslationServiceInterface
             ksort($mergedTranslatedStrings);
             return $mergedTranslatedStrings;
         } catch (DeepLException $e) {
-            $this->logger?->critical('DeeplException caught: ' . $e->getMessage());
+            $this->logger->critical(
+                sprintf(
+                    'DeepL API exception: "%s"',
+                    $e->getMessage(),
+                )
+            );
+            $this->logger->critical(
+                sprintf(
+                    'DeepL API exception: dumping %d text(s) sent to DeepL for source="%s" target="%s":',
+                    count($valuesWithMaskedTerms),
+                    $sourceLanguage ?? 'null',
+                    $targetLanguage,
+                )
+            );
+            foreach ($valuesWithMaskedTerms as $index => $text) {
+                $this->logger->critical(
+                    sprintf(
+                        'DeepL API exception: text[%s] (length %d): %s',
+                        $keys[$index] ?? $index,
+                        strlen($text),
+                        $text,
+                    )
+                );
+            }
             return array_replace($texts, $cachedEntries);
         }
     }
@@ -172,7 +211,14 @@ class DeepLTranslationService implements TranslationServiceInterface
         try {
             $client = $this->deeplClientFactory->createDeepLClient();
             $usage = $client->getUsage();
-            return new ApiStatus(true, $usage->character?->count ?? 0, $usage->character?->limit ?? 0, $key->isSettingKey, $key->isCustomKey, $key->isFree);
+            return new ApiStatus(
+                true,
+                $usage->character?->count ?? 0,
+                $usage->character?->limit ?? 0,
+                $key->isSettingKey,
+                $key->isCustomKey,
+                $key->isFree
+            );
         } catch (DeepLException) {
             return new ApiStatus(false, 0, 0, $key->isSettingKey, $key->isCustomKey, $key->isFree);
         }

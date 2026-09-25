@@ -13,6 +13,7 @@ use Neos\Flow\Persistence\Doctrine\PersistenceManager;
 use Neos\Flow\Persistence\Exception\IllegalObjectTypeException;
 use Neos\Neos\Service\PublishingService;
 use Neos\Neos\Utility\NodeUriPathSegmentGenerator;
+use Psr\Log\LoggerInterface;
 use Sitegeist\LostInTranslation\Domain\TranslatableProperty\TranslatablePropertyNamesFactory;
 use Sitegeist\LostInTranslation\Domain\TranslationServiceInterface;
 use Sitegeist\LostInTranslation\Utility\ArrayFlatteningUtility;
@@ -103,6 +104,9 @@ class NodeTranslationService
      */
     protected $translatablePropertiesFactory;
 
+    #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
+    protected LoggerInterface $logger;
+
     /**
      * This is an internal property and should always be 'live'.
      * Its only purpose is to be overridden in functional testing.
@@ -151,7 +155,9 @@ class NodeTranslationService
             }
         }
 
-        $isAutomaticTranslationEnabledForNodeType = $node->getNodeType()->getConfiguration('options.automaticTranslation') ?? true;
+        $isAutomaticTranslationEnabledForNodeType = $node->getNodeType()->getConfiguration(
+            'options.automaticTranslation'
+        ) ?? true;
         if (!$isAutomaticTranslationEnabledForNodeType) {
             return;
         }
@@ -175,8 +181,8 @@ class NodeTranslationService
     }
 
     /**
-     * @param  NodeInterface  $node
-     * @param  Workspace  $workspace
+     * @param NodeInterface $node
+     * @param Workspace $workspace
      * @return void
      */
     public function collectNodesToBeTranslated(NodeInterface $node, Workspace $workspace): void
@@ -197,7 +203,9 @@ class NodeTranslationService
             }
         }
 
-        $isAutomaticTranslationEnabledForNodeType = $node->getNodeType()->getConfiguration('options.automaticTranslation') ?? true;
+        $isAutomaticTranslationEnabledForNodeType = $node->getNodeType()->getConfiguration(
+            'options.automaticTranslation'
+        ) ?? true;
         if (!$isAutomaticTranslationEnabledForNodeType) {
             return;
         }
@@ -265,7 +273,10 @@ class NodeTranslationService
         $sourceLanguagePreset = $this->contentDimensionConfiguration[$this->languageDimensionName]['presets'][$sourceDimensionValue];
         $targetLanguagePreset = $this->contentDimensionConfiguration[$this->languageDimensionName]['presets'][$targetDimensionValue];
 
-        if (array_key_exists('options', $sourceLanguagePreset) && array_key_exists('deeplLanguage', $sourceLanguagePreset['options'])) {
+        if (array_key_exists('options', $sourceLanguagePreset) && array_key_exists(
+                'deeplLanguage',
+                $sourceLanguagePreset['options']
+            )) {
             $sourceLanguage = $sourceLanguagePreset['options']['deeplLanguage'];
             if (str_contains($sourceLanguage, ':')) {
                 $sourceLanguageParts = explode(':', $sourceLanguage, 2);
@@ -273,7 +284,10 @@ class NodeTranslationService
             }
         }
 
-        if (array_key_exists('options', $targetLanguagePreset) && array_key_exists('deeplLanguage', $targetLanguagePreset['options'])) {
+        if (array_key_exists('options', $targetLanguagePreset) && array_key_exists(
+                'deeplLanguage',
+                $targetLanguagePreset['options']
+            )) {
             $targetLanguage = $targetLanguagePreset['options']['deeplLanguage'];
             if (str_contains($targetLanguage, ':')) {
                 $targetLanguageParts = explode(':', $targetLanguage, 2);
@@ -281,8 +295,25 @@ class NodeTranslationService
             }
         }
         if (empty($sourceLanguage) || empty($targetLanguage) || ($sourceLanguage == $targetLanguage)) {
+            $this->logger->debug(
+                sprintf(
+                    'translateNode: skipping node "%s", source="%s" target="%s"',
+                    $sourceNode->getIdentifier(),
+                    $sourceLanguage,
+                    $targetLanguage,
+                )
+            );
             return;
         }
+
+        $this->logger->debug(
+            sprintf(
+                'translateNode: node "%s" source="%s" target="%s"',
+                $sourceNode->getIdentifier(),
+                $sourceLanguage,
+                $targetLanguage,
+            )
+        );
 
         // The "true" here is necessary to receive referenced nodes just as identifiers and not as objects!
         /** @phpstan-ignore arguments.count */
@@ -291,6 +322,13 @@ class NodeTranslationService
 
         foreach ($properties as $propertyName => $propertyValue) {
             if (empty($propertyValue)) {
+                $this->logger->debug(
+                    sprintf(
+                        'translateNode: empty source for property "%s" on node "%s"',
+                        $propertyName,
+                        $sourceNode->getIdentifier(),
+                    )
+                );
                 continue;
             }
             assert($propertyName !== '');
@@ -299,6 +337,13 @@ class NodeTranslationService
                 continue;
             }
             if (is_string($propertyValue) && trim(strip_tags($propertyValue)) === "") {
+                $this->logger->debug(
+                    sprintf(
+                        'translateNode: property "%s" on node "%s" contains no text after stripping tags',
+                        $propertyName,
+                        $sourceNode->getIdentifier(),
+                    )
+                );
                 continue;
             }
             if ($connector = $translatableProperties->getTranslationObjectConnector($propertyName)) {
@@ -311,15 +356,33 @@ class NodeTranslationService
         }
 
         if (count($propertiesToTranslate) > 0) {
+            $this->logger->debug(
+                sprintf(
+                    'translateNode: translating %d properties for node "%s"',
+                    count($propertiesToTranslate),
+                    $sourceNode->getIdentifier(),
+                )
+            );
             $propertiesToTranslateDeflated = ArrayFlatteningUtility::deflate($propertiesToTranslate);
             /** @var array<non-empty-string, string> $translatedPropertiesDeflated */
-            $translatedPropertiesDeflated = $this->translationService->translate($propertiesToTranslateDeflated, $targetLanguage, $sourceLanguage);
+            $translatedPropertiesDeflated = $this->translationService->translate(
+                $propertiesToTranslateDeflated,
+                $targetLanguage,
+                $sourceLanguage
+            );
             $translatedProperties = ArrayFlatteningUtility::enflate($translatedPropertiesDeflated);
             $properties = array_merge($translatedProperties, $properties);
         } else {
+            $this->logger->debug(
+                sprintf(
+                    'translateNode: no translatable properties with values for node "%s"',
+                    $sourceNode->getIdentifier(),
+                )
+            );
             $translatedProperties = [];
         }
 
+        $propertiesSet = 0;
         foreach ($properties as $propertyName => $propertyValue) {
             // Make sure the uriPathSegment is valid
             if ($propertyName === 'uriPathSegment' && !preg_match('/^[a-z0-9\-]+$/i', $propertyValue)) {
@@ -337,8 +400,17 @@ class NodeTranslationService
             }
             if ($targetNode->getProperty($propertyName) !== $targetValue) {
                 $targetNode->setProperty($propertyName, $targetValue);
+                $propertiesSet++;
             }
         }
+
+        $this->logger->debug(
+            sprintf(
+                'translateNode: updated %d properties on node "%s"',
+                $propertiesSet,
+                $targetNode->getIdentifier(),
+            )
+        );
     }
 
     /**
@@ -346,8 +418,10 @@ class NodeTranslationService
      * @param string $workspaceName
      * @return Context
      */
-    public function getContextForLanguageDimensionAndWorkspaceName(string $language, string $workspaceName = 'live'): Context
-    {
+    public function getContextForLanguageDimensionAndWorkspaceName(
+        string $language,
+        string $workspaceName = 'live'
+    ): Context {
         $dimensionAndWorkspaceIdentifierHash = md5(trim($language . $workspaceName));
 
         if (array_key_exists($dimensionAndWorkspaceIdentifierHash, $this->contextFirstLevelCache)) {
@@ -373,16 +447,39 @@ class NodeTranslationService
     /**
      * Checks the requirements if a node can be synchronised and executes the sync.
      *
-     * @param  NodeInterface  $sourceNode
-     * @param  string  $workspaceName
-     * @param  string|null  $targetPresetIdentifier Restrict syncing to only one language preset
-     * @param  bool  $force Omits checking the translation strategy
+     * @param NodeInterface $sourceNode
+     * @param string $workspaceName
+     * @param string|null $targetPresetIdentifier Restrict syncing to only one language preset
+     * @param bool $force Omits checking the translation strategy
      * @return void
      */
-    public function syncNode(NodeInterface $sourceNode, string $workspaceName = 'live', ?string $targetPresetIdentifier = null, bool $force = false): void
-    {
-        $isAutomaticTranslationEnabledForNodeType = $sourceNode->getNodeType()->getConfiguration('options.automaticTranslation') ?? true;
+    public function syncNode(
+        NodeInterface $sourceNode,
+        string $workspaceName = 'live',
+        ?string $targetPresetIdentifier = null,
+        bool $force = false
+    ): void {
+        $this->logger->debug(
+            sprintf(
+                'syncNode: node="%s" workspace="%s" targetPreset="%s" force="%s"',
+                $sourceNode->getIdentifier(),
+                $workspaceName,
+                $targetPresetIdentifier ?? 'all',
+                $force ? 'yes' : 'no',
+            )
+        );
+
+        $isAutomaticTranslationEnabledForNodeType = $sourceNode->getNodeType()->getConfiguration(
+            'options.automaticTranslation'
+        ) ?? true;
         if (!$isAutomaticTranslationEnabledForNodeType) {
+            $this->logger->debug(
+                sprintf(
+                    'syncNode: automatic translation disabled for nodeType "%s" on node "%s"',
+                    $sourceNode->getNodeType()->getName(),
+                    $sourceNode->getIdentifier(),
+                )
+            );
             return;
         }
 
@@ -390,6 +487,14 @@ class NodeTranslationService
         $defaultPreset = $this->contentDimensionConfiguration[$this->languageDimensionName]['defaultPreset'];
 
         if ($nodeSourceDimensionValue !== $defaultPreset) {
+            $this->logger->debug(
+                sprintf(
+                    'syncNode: node "%s" is not in default preset "%s" (is "%s"), skipping',
+                    $sourceNode->getIdentifier(),
+                    $defaultPreset,
+                    $nodeSourceDimensionValue,
+                )
+            );
             return;
         }
 
@@ -408,6 +513,13 @@ class NodeTranslationService
                 continue;
             }
             if (!$sourceNode->isRemoved()) {
+                $this->logger->debug(
+                    sprintf(
+                        'syncNode: syncing node "%s" into preset "%s"',
+                        $sourceNode->getIdentifier(),
+                        $presetIdentifier,
+                    )
+                );
                 $context = $this->getContextForLanguageDimensionAndWorkspaceName($presetIdentifier, $workspaceName);
                 $context->getFirstLevelNodeCache()->flush();
 
@@ -433,8 +545,25 @@ class NodeTranslationService
 
                 $context->getFirstLevelNodeCache()->flush();
                 $this->publishingService->publishNode($targetNode);
+                $this->logger->debug(
+                    sprintf(
+                        'syncNode: published node "%s" in preset "%s"',
+                        $sourceNode->getIdentifier(),
+                        $presetIdentifier,
+                    )
+                );
             } else {
-                $removeContext = $this->getContextForLanguageDimensionAndWorkspaceName($presetIdentifier, $workspaceName);
+                $this->logger->debug(
+                    sprintf(
+                        'syncNode: source node "%s" is removed, removing variant in preset "%s"',
+                        $sourceNode->getIdentifier(),
+                        $presetIdentifier,
+                    )
+                );
+                $removeContext = $this->getContextForLanguageDimensionAndWorkspaceName(
+                    $presetIdentifier,
+                    $workspaceName
+                );
                 $targetNode = $removeContext->getNodeByIdentifier($sourceNode->getIdentifier());
                 if ($targetNode !== null) {
                     $targetNode->setRemoved(true);
