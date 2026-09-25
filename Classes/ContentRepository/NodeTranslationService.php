@@ -104,6 +104,12 @@ class NodeTranslationService
      */
     protected $translatablePropertiesFactory;
 
+    /**
+     * @Flow\InjectConfiguration(path="nodeTranslation.experimental-applyHtmlEntityDecodeAfterTranslation")
+     * @var bool
+     */
+    protected $experimentalApplyHtmlEntityDecodeAfterTranslation = false;
+
     #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
     protected LoggerInterface $logger;
 
@@ -370,6 +376,12 @@ class NodeTranslationService
                 $targetLanguage,
                 $sourceLanguage
             );
+            if ($this->experimentalApplyHtmlEntityDecodeAfterTranslation) {
+                $translatedPropertiesDeflated = array_map(
+                    static fn(string $value): string => html_entity_decode($value),
+                    $translatedPropertiesDeflated,
+                );
+            }
             $translatedProperties = ArrayFlatteningUtility::enflate($translatedPropertiesDeflated);
             $properties = array_merge($translatedProperties, $properties);
         } else {

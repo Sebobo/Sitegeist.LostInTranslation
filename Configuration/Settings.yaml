@@ -34,7 +34,7 @@ Sitegeist:
       # and hence ignored by the DeepL API.
       # For example: brand names, city names, etc.
       #
-      ignoredTerms: []
+      ignoredTerms: [ ]
 
       #
       # Here you can specify how a request to the DeepL API should
@@ -81,7 +81,7 @@ Sitegeist:
       #
       skipAuthorizationChecks: false
 
-      excludedNodePaths: []
+      excludedNodePaths: [ ]
 
       #
       # Translate all object properties that have a translationConnector configured
@@ -95,7 +95,13 @@ Sitegeist:
       # for each value object type a clas implementing the TranslationConnectorInterface
       # can be configured to extract and apply translations
       #
-      translationConnectors: []
+      translationConnectors: [ ]
+
+      #
+      # Apply html_entity_decode to translated strings.
+      # !!! this is experimental and may be removed in future !!!
+      #
+      experimental-applyHtmlEntityDecodeAfterTranslation: false
 
       #
       # Configure behavior of the retranslation feature
