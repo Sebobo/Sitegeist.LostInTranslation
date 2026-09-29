@@ -11,6 +11,7 @@ use Neos\Neos\Domain\Service\ContentContext;
 use Neos\Neos\Domain\Service\ContentContextFactory;
 use Neos\Neos\Domain\Service\ContentDimensionPresetSourceInterface;
 use Psr\Log\LoggerInterface;
+use Sitegeist\LostInTranslation\Domain\RetranslationResult;
 use Sitegeist\LostInTranslation\Domain\TranslatableProperty\TranslatablePropertyNamesFactory;
 
 /**
@@ -131,20 +132,36 @@ class RetranslationService
 
     /**
      * @param array<string,string> $targetCoordinates
+     * @param bool $force Retranslate every node in the subtree regardless of modification dates,
+     *                    instead of only nodes whose target is older than the source.
      */
     public function retranslateNode(
         string $nodeAggregateId,
         string $workspaceName,
         array $targetCoordinates,
-    ): void {
+        bool $force = false,
+    ): RetranslationResult {
         $this->logger->debug(
             sprintf(
-                'RetranslateNode: node="%s" workspace="%s" -> target %s',
+                'RetranslateNode: node="%s" workspace="%s" -> target %s (force="%s")',
                 $nodeAggregateId,
                 $workspaceName,
                 \json_encode($targetCoordinates),
+                $force ? 'yes' : 'no',
             )
         );
+
+        if ($this->resolveReferenceLanguage($targetCoordinates) === null) {
+            $skippedReason = sprintf(
+                'no referenceLanguage configured for target language "%s"',
+                $targetCoordinates[$this->languageDimensionName] ?? 'unknown'
+            );
+            $this->logger->warning(
+                sprintf('RetranslateNode skipped: "%s"', $skippedReason)
+            );
+
+            return RetranslationResult::skipped($skippedReason);
+        }
 
         $sourceContentContext = $this->getReferenceContentContext($workspaceName, $targetCoordinates);
 
@@ -174,18 +191,35 @@ class RetranslationService
             $targetContentContext->adoptNode($sourceNode);
         }
 
-        $this->translateDescendants($sourceNode, $targetContentContext);
+        $translatedNodes = 0;
+        $adoptedNodes = 0;
+        $this->translateDescendants($sourceNode, $targetContentContext, $force, $translatedNodes, $adoptedNodes);
 
         $this->logger->info(
             sprintf(
-                'RetranslateNode complete: node="%s"',
+                'RetranslateNode complete: node="%s" force="%s" translated=%d adopted=%d',
                 $nodeAggregateId,
+                $force ? 'yes' : 'no',
+                $translatedNodes,
+                $adoptedNodes,
             )
         );
+
+        return RetranslationResult::dispatched($translatedNodes, $adoptedNodes);
     }
 
-    private function translateDescendants(NodeInterface $node, ContentContext $targetContentContext): void
-    {
+    /**
+     * @param bool $force Treat every node as stale, i.e. translate regardless of modification dates.
+     * @param int $translatedNodes Incremented for every node whose translated properties were (re)applied.
+     * @param int $adoptedNodes Incremented for every node created in the target because it was missing.
+     */
+    private function translateDescendants(
+        NodeInterface $node,
+        ContentContext $targetContentContext,
+        bool $force = false,
+        int &$translatedNodes = 0,
+        int &$adoptedNodes = 0,
+    ): void {
         $targetNode = $targetContentContext->getNodeByIdentifier($node->getIdentifier());
         if (!$targetNode) {
             $this->logger->debug(
@@ -194,22 +228,25 @@ class RetranslationService
                     $node->getIdentifier(),
                 )
             );
+            $adoptedNodes++;
             // translation will be done implicitly here
             $targetContentContext->adoptNode($node);
         } else {
             /** @var Node $node */
             /** @var Node $targetNode */
-            if ($targetNode->getLastModificationDateTime() < $node->getLastModificationDateTime()) {
+            if ($force || $targetNode->getLastModificationDateTime() < $node->getLastModificationDateTime()) {
                 $this->logger->debug(
                     sprintf(
-                        'Walk: node "%s" is stale, translating (syncNodeType="%s" syncProperties="%s" syncPosition="%s" syncVisibility="%s")',
+                        'Walk: node "%s" is %s, translating (syncNodeType="%s" syncProperties="%s" syncPosition="%s" syncVisibility="%s")',
                         $node->getIdentifier(),
+                        $force ? 'force-translating' : 'stale',
                         $this->synchronizeNodeType ? 'yes' : 'no',
                         $this->synchronizeUntranslatedProperties ? 'yes' : 'no',
                         $this->synchronizeNodePosition ? 'yes' : 'no',
                         $this->synchronizeNodeVisibility ? 'yes' : 'no',
                     )
                 );
+                $translatedNodes++;
                 $this->nodeTranslationService->translateNode($node, $targetNode, $targetContentContext);
                 if ($this->synchronizeNodeType && $node->getNodeType()->getName() !== $targetNode->getNodeType()->getName()) {
                     $targetNode->setNodeType($node->getNodeType());
@@ -267,7 +304,13 @@ class RetranslationService
         $sourceNodeByIdentifier = [];
         foreach ($node->getChildNodes('Neos.Neos:Content,Neos.Neos:ContentCollection') as $sourceChildNode) {
             $sourceNodeByIdentifier[$sourceChildNode->getIdentifier()] = $sourceChildNode;
-            $this->translateDescendants($sourceChildNode, $targetContentContext);
+            $this->translateDescendants(
+                $sourceChildNode,
+                $targetContentContext,
+                $force,
+                $translatedNodes,
+                $adoptedNodes
+            );
         }
 
         if ($this->removeNodesWithoutSource) {
@@ -314,12 +357,24 @@ class RetranslationService
     }
 
     /**
+     * Resolves the reference language configured for the given target language.
+     *
+     * @param array<string,string> $coordinates
+     * @return string|null The reference language preset identifier or null if none is configured
+     */
+    protected function resolveReferenceLanguage(array $coordinates): ?string
+    {
+        $targetLanguagePreset = $this->contentDimensionPresetSource->getAllPresets()[$this->languageDimensionName]['presets'][$coordinates[$this->languageDimensionName]];
+
+        return $targetLanguagePreset['options']['referenceLanguage'] ?? null;
+    }
+
+    /**
      * @param array<string,string> $coordinates
      */
     public function getReferenceContentContext(string $workspaceName, array $coordinates): ContentContext
     {
-        $targetLanguagePreset = $this->contentDimensionPresetSource->getAllPresets()[$this->languageDimensionName]['presets'][$coordinates[$this->languageDimensionName]];
-        $referenceLanguage = $targetLanguagePreset['options']['referenceLanguage'] ?? null;
+        $referenceLanguage = $this->resolveReferenceLanguage($coordinates);
         if ($referenceLanguage === null) {
             throw new \Exception(
                 'No reference language configured for target language ' . $coordinates[$this->languageDimensionName]

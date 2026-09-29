@@ -14,6 +14,7 @@ use Neos\Flow\Cli\Exception\StopCommandException;
 use Neos\Neos\Domain\Repository\SiteRepository;
 use Psr\Log\LoggerInterface;
 use Sitegeist\LostInTranslation\ContentRepository\NodeTranslationService;
+use Sitegeist\LostInTranslation\ContentRepository\RetranslationService;
 
 class TranslationCommandController extends CommandController
 {
@@ -55,6 +56,12 @@ class TranslationCommandController extends CommandController
 
     #[Flow\Inject('Sitegeist.LostInTranslation:TranslationLogger', false)]
     protected LoggerInterface $logger;
+
+    /**
+     * @Flow\Inject
+     * @var RetranslationService
+     */
+    protected $retranslationService;
 
     /**
      * @param string $nodePath The start node path to start the sync from, e.g. '/sites/example.com/home'. It must not be '/sites'.
@@ -136,6 +143,109 @@ class TranslationCommandController extends CommandController
             )
         );
         $this->quit();
+    }
+
+    /**
+     * Retranslate the subtree below the given node into the target language.
+     *
+     * The source language is derived from the target preset's `referenceLanguage` configuration.
+     *
+     * @param string $nodeAggregateId Identifier of the node to start from
+     * @param string $target The target language preset identifier, e.g. "en"
+     * @param string $workspace The workspace name, e.g. "live"
+     * @param bool $force Retranslate every node of the subtree instead of only outdated ones
+     */
+    public function retranslateNodeCommand(
+        string $nodeAggregateId,
+        string $target,
+        string $workspace = 'live',
+        bool $force = false,
+    ): void {
+        $this->logger->debug(
+            sprintf(
+                'retranslateNodeCommand: node="%s" target="%s" ws="%s" force="%s"',
+                $nodeAggregateId,
+                $target,
+                $workspace,
+                $force ? 'yes' : 'no',
+            )
+        );
+
+        $targetCoordinates = $this->getTargetCoordinates($target);
+
+        $this->output->outputLine(
+            'Starting retranslation for node "%s" -> "%s" in workspace "%s"…',
+            [$nodeAggregateId, $target, $workspace]
+        );
+
+        $result = $this->retranslationService->retranslateNode(
+            $nodeAggregateId,
+            $workspace,
+            $targetCoordinates,
+            $force,
+        );
+
+        if ($result->skippedReason !== null) {
+            $this->logger->debug(
+                sprintf('retranslateNodeCommand skipped: "%s"', $result->skippedReason)
+            );
+            $this->output->outputLine(
+                'Retranslation for node "%s" -> "%s" skipped: %s',
+                [$nodeAggregateId, $target, $result->skippedReason]
+            );
+            return;
+        }
+
+        if ($result->isNoOp()) {
+            $this->logger->debug('retranslateNodeCommand: no-op (nothing to retranslate)');
+            $this->output->outputLine(
+                'Retranslation for node "%s" -> "%s": nothing to do (no outdated properties, no missing nodes).',
+                [$nodeAggregateId, $target]
+            );
+            return;
+        }
+
+        $this->logger->info(
+            sprintf(
+                'retranslateNodeCommand dispatched: %d translated + %d adopted',
+                $result->stalePropertyCommandsDispatched,
+                $result->variantCommandsDispatched,
+            )
+        );
+        $this->output->outputLine(
+            'Retranslation for node "%s" -> "%s": retranslated %d node(s) and created %d missing node(s).',
+            [
+                $nodeAggregateId,
+                $target,
+                $result->stalePropertyCommandsDispatched,
+                $result->variantCommandsDispatched,
+            ]
+        );
+    }
+
+    /**
+     * Resolves a language preset identifier into a full dimension coordinate array.
+     *
+     * @param array<string, array{defaultPreset: string}> $contentDimensionConfiguration
+     * @return array<string,string>
+     */
+    protected function getTargetCoordinates(string $target): array
+    {
+        $coordinates = [];
+        foreach ($this->contentDimensionConfiguration as $dimensionName => $dimensionConfiguration) {
+            $coordinates[$dimensionName] = $dimensionConfiguration['defaultPreset'];
+        }
+        $coordinates[$this->languageDimensionName] = $target;
+
+        if (!isset($this->contentDimensionConfiguration[$this->languageDimensionName]['presets'][$target])) {
+            $this->output->outputLine(
+                'The target language "%s" is not a configured preset of the "%s" dimension.',
+                [$target, $this->languageDimensionName]
+            );
+            $this->quit(1);
+        }
+
+        return $coordinates;
     }
 
     /**

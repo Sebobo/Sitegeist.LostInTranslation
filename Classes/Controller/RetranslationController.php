@@ -126,19 +126,26 @@ class RetranslationController extends ActionController
         string $nodeAggregateId,
         string $workspaceName,
         string $targetCoordinates,
+        bool $force = false,
     ): string {
         $this->translationLogger->debug(
             sprintf(
-                'retranslateNode: node="%s" workspace="%s" target=%s',
+                'retranslateNode: node="%s" workspace="%s" target=%s force="%s"',
                 $nodeAggregateId,
                 $workspaceName,
                 $targetCoordinates,
+                $force ? 'yes' : 'no',
             )
         );
 
         $targetCoordinates = \json_decode($targetCoordinates, true);
         try {
-            $this->retranslationService->retranslateNode($nodeAggregateId, $workspaceName, $targetCoordinates);
+            $result = $this->retranslationService->retranslateNode(
+                $nodeAggregateId,
+                $workspaceName,
+                $targetCoordinates,
+                $force
+            );
         } catch (\Exception $exception) {
             $this->translationLogger->error(
                 sprintf(
@@ -154,14 +161,21 @@ class RetranslationController extends ActionController
 
         $this->translationLogger->debug(
             sprintf(
-                'retranslateNode result: successfully translated node "%s"',
+                'retranslateNode result: node="%s" translated=%d adopted=%d skipped="%s"',
                 $nodeAggregateId,
+                $result->stalePropertyCommandsDispatched,
+                $result->variantCommandsDispatched,
+                $result->skippedReason ?? 'no',
             )
         );
 
         return \json_encode(
             [
-                'message' => 'Successfully translated'
+                'message' => $result->skippedReason !== null
+                    ? sprintf('Skipped: %s', $result->skippedReason)
+                    : 'Successfully translated',
+                'stalePropertyCommandsDispatched' => $result->stalePropertyCommandsDispatched,
+                'variantCommandsDispatched' => $result->variantCommandsDispatched,
             ],
             JSON_THROW_ON_ERROR,
         );
