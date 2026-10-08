@@ -25,8 +25,6 @@ export const useTranslate = ({target}: UseTranslateParams) => {
                 throw new Error('Missing workspace');
             }
 
-            debugger;
-
             return endpoints().translate({
                 nodeAggregateId: nodeId,
                 workspaceName: workspace,
