@@ -23,6 +23,9 @@
             <trans-unit id="button.translate">
                 <source>Retranslate</source>
             </trans-unit>
+            <trans-unit id="button.forceTranslate">
+                <source>Force translation</source>
+            </trans-unit>
         </body>
     </file>
 </xliff>

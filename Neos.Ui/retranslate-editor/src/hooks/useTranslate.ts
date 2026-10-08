@@ -12,7 +12,7 @@ export const useTranslate = ({target}: UseTranslateParams) => {
 
     return useMutation({
         mutationKey: ['lost-in-translation', 'translate', nodeId, dimensions, workspace, target],
-        mutationFn: async () => {
+        mutationFn: async (variables: { force: boolean }) => {
             if (!nodeId) {
                 throw new Error('Missing nodeId');
             }
@@ -25,10 +25,13 @@ export const useTranslate = ({target}: UseTranslateParams) => {
                 throw new Error('Missing workspace');
             }
 
+            debugger;
+
             return endpoints().translate({
                 nodeAggregateId: nodeId,
                 workspaceName: workspace,
-                targetCoordinates: JSON.stringify(dimensions)
+                targetCoordinates: JSON.stringify(dimensions),
+                force: variables.force,
             });
         },
         onSuccess: () => {

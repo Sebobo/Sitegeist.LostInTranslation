@@ -19,6 +19,7 @@ export type TranslateRequest = {
     nodeAggregateId: string;
     workspaceName: string;
     targetCoordinates: string;
+    force: boolean;
 };
 
 export type TranslateResponse = {

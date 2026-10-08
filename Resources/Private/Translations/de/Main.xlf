@@ -30,6 +30,10 @@
                 <source>Retranslate</source>
                 <target state="translated">Neu Übersetzen</target>
             </trans-unit>
+            <trans-unit id="button.forceTranslate">
+                <source>Force translation</source>
+                <target state="translated">Erzwinge Übersetzung</target>
+            </trans-unit>
         </body>
     </file>
 </xliff>

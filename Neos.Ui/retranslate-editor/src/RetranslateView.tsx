@@ -50,7 +50,11 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
     }
 
     const handleTranslate = () => {
-        translate();
+        translate({ force: false });
+    };
+
+    const handleForceTranslate = () => {
+        translate({ force: true });
     };
 
     return (
@@ -83,6 +87,11 @@ export const RetranslateView = ({for: target}: RetranslateViewProps) => {
             {!contentData.isUpToDate && !translationPending && (
                 <Button onClick={handleTranslate}>
                     {t('button.translate', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
+                </Button>
+            )}
+            {contentData.isUpToDate && !translationPending && (
+                <Button onClick={handleForceTranslate}>
+                    {t('button.forceTranslate', '', {}, 'Sitegeist.LostInTranslation', 'Main')}
                 </Button>
             )}
         </Container>
