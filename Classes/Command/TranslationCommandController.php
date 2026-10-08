@@ -77,7 +77,8 @@ class TranslationCommandController extends CommandController
         string $nodePath,
         string $from,
         string $to,
-        string $nodeTypeFilter = 'Neos.Neos:Document'
+        string $nodeTypeFilter = 'Neos.Neos:Document',
+        bool $recursive = false
     ): void {
         $this->logger->debug(
             sprintf(
@@ -113,7 +114,9 @@ class TranslationCommandController extends CommandController
 
         $nodeTypeFilter = sprintf('[instanceof %s]', $nodeTypeFilter);
         $documentNodeQuery = new FlowQuery([$rootNode]);
-        $documentNodeQuery->pushOperation('find', [$nodeTypeFilter]);
+        if ($recursive) {
+            $documentNodeQuery->pushOperation('find', [$nodeTypeFilter]);
+        }
         // @phpstan-ignore method.notFound
         $documentNodes = $documentNodeQuery->get();
         array_unshift($documentNodes, $rootNode);
