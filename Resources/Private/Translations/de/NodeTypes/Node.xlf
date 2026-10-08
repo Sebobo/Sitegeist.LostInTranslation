@@ -10,6 +10,10 @@
                 <source>Retranslate</source>
                 <target state="translated">Neu übersetzen</target>
             </trans-unit>
+            <trans-unit id="properties.disableAutomaticTranslation" xml:space="preserve">
+                <source>Disable automatic translation</source>
+                <target state="translated">Automatische Übersetzung deaktivieren</target>
+            </trans-unit>
         </body>
     </file>
 </xliff>

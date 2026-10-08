@@ -1,6 +1,32 @@
 'Neos.Neos:Node':
   options:
     automaticTranslation: true
+  properties:
+    #
+    # Marks a node as "do not translate automatically".
+    #
+    # Automatic translation overwrites the text properties of every other
+    # language variant whenever the default language variant is published. If
+    # such a translation is wrong, an editor has no way to keep their own
+    # version: the next publish overwrites it again.
+    #
+    # Setting this property makes the automatic translation skip the text
+    # properties of this node, so they can be maintained by hand. All non-text
+    # properties (images, references, positions, visibility, …) keep being
+    # synced from the default language variant, as does the variant itself — it
+    # is still created if it does not exist yet.
+    #
+    # The property is only read from the default language variant, since that is
+    # the node the automatic translation is started from.
+    #
+    disableAutomaticTranslation:
+      type: boolean
+      defaultValue: false
+      ui:
+        label: 'Sitegeist.LostInTranslation:NodeTypes.Node:properties.disableAutomaticTranslation'
+        inspector:
+          group: lostInTranslation
+          position: 10
   ui:
     inspector:
       groups:

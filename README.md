@@ -56,6 +56,17 @@ Also, automatic translation for all types derived from `Neos.Neos:Node` is enabl
       automaticTranslation: true
 ```
 
+### Excluding a Single Node From Translation
+
+If an automatic translation is wrong, the editor can keep their own version by setting the boolean property `disableAutomaticTranslation` on the node. It is available on `Neos.Neos:Node`, so it can be used on documents as well as on content, and it shows up in the inspector next to the retranslate view.
+
+For such a node the automatic translation skips all translatable properties: they are neither sent to DeepL nor copied over from the default language variant, so whatever is in the target variant is kept. Everything else stays automatic — the variant is still created, moved, updated with all non translatable properties (images, references, visibility, …) and published.
+
+The property is read from the default language variant, since that is the node the automatic translation starts from.
+It is respected by the retranslate view and by the `translation:sync` and `translation:retranslatenode` commands as well.
+
+Note that a freshly created variant is seeded with the untranslated source text, so a node excluded for the first time still shows the source language until its text has been translated by hand.
+
 ### Retranslate View
 
 This package adds a Retranslate View to both `Neos.Neos:Document` and `Neos.Neos:Node`.

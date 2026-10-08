@@ -28,6 +28,14 @@ class NodeTranslationService
     public const TRANSLATION_STRATEGY_NONE = 'none';
 
     /**
+     * Name of the node property that excludes a single node from the automatic
+     * translation of its text properties.
+     *
+     * @see Configuration/NodeTypes.yaml
+     */
+    public const PROPERTY_DISABLE_AUTOMATIC_TRANSLATION = 'disableAutomaticTranslation';
+
+    /**
      * @Flow\Inject
      * @var TranslationServiceInterface
      */
@@ -326,7 +334,26 @@ class NodeTranslationService
         $properties = (array)$sourceNode->getProperties(true);
         $propertiesToTranslate = [];
 
+        $automaticTranslationIsDisabled = $sourceNode->getProperty(self::PROPERTY_DISABLE_AUTOMATIC_TRANSLATION) === true;
+        if ($automaticTranslationIsDisabled) {
+            $this->logger->debug(
+                sprintf(
+                    'translateNode: skipping automatic translation of node "%s" for preset "%s", "%s" is set',
+                    $sourceNode->getIdentifier(),
+                    $targetLanguage,
+                    self::PROPERTY_DISABLE_AUTOMATIC_TRANSLATION,
+                )
+            );
+        }
+
         foreach ($properties as $propertyName => $propertyValue) {
+            if ($automaticTranslationIsDisabled && $translatableProperties->isTranslatable($propertyName)) {
+                // The translation of this node is maintained by hand, so its text is neither
+                // sent to deepl nor copied over from the source. Removing it from $properties
+                // keeps it out of the properties applied to the target node further down.
+                unset($properties[$propertyName]);
+                continue;
+            }
             if (empty($propertyValue)) {
                 $this->logger->debug(
                     sprintf(
@@ -387,7 +414,10 @@ class NodeTranslationService
         } else {
             $this->logger->debug(
                 sprintf(
-                    'translateNode: no translatable properties with values for node "%s"',
+                    'translateNode: %s for node "%s"',
+                    $automaticTranslationIsDisabled
+                        ? 'automatic translation disabled, only non-translatable properties are synchronized'
+                        : 'no translatable properties with values',
                     $sourceNode->getIdentifier(),
                 )
             );
